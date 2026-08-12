@@ -8,7 +8,7 @@
     "flow_title": "{name}",
     "step": {
       "confirm": {
-        "description": "{name} ({address}) einrichten? Die Kühlbox wird während der Einrichtung über Bluetooth gekoppelt."
+        "description": "{name} ({address}) einrichten? Home Assistant verbindet sich über Bluetooth mit der Kühlbox."
       },
       "user": {
         "data": {"address": "Gerät"},

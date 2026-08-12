@@ -25,7 +25,6 @@ from .const import (
     DDM2_WRITE_UUID,
     DEFAULT_NAME,
     INITIAL_DATA_TIMEOUT_SECONDS,
-    PAIRING_SETTLE_SECONDS,
     UPDATE_INTERVAL_SECONDS,
 )
 from .protocol import (
@@ -236,7 +235,7 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
     async def _async_initialize_connection(
         self, ble_device: Any
     ) -> BleakClientWithServiceCache:
-        """Connect, enable link encryption and initialize one CFX session."""
+        """Connect and initialize one CFX session."""
 
         client: BleakClientWithServiceCache | None = None
         self._initial_data.clear()
@@ -248,11 +247,6 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
                 disconnected_callback=self._disconnected_callback,
                 pair=False,
             )
-            # Match the working ESPHome client: establish the BLE link first,
-            # let it settle like Mobile Cooling, then request Just Works
-            # encryption/bonding.
-            await asyncio.sleep(PAIRING_SETTLE_SECONDS)
-            await client.pair()
             self._select_protocol(client)
             self._client = client
             notify_uuid = self._selected_notify_uuid()
@@ -266,7 +260,7 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
         return client
 
     async def _async_connect(self) -> None:
-        """Connect first, then pair, negotiate the protocol and subscribe."""
+        """Connect, negotiate the protocol and subscribe."""
 
         async with self._connect_lock:
             if self._client is not None and self._client.is_connected:

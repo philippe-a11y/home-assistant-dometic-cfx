@@ -7,7 +7,7 @@
 
 # Dometic CFX for Home Assistant
 
-Native Home Assistant custom integration for the CFX generations supported by Dometic Mobile Cooling 2.0.32: **CFX2, CFX3 and CFX5**. It discovers a nearby cooler automatically, pairs it, selects DDM1 or DDM2 from the verified GATT service, detects its product type and compartment count, and creates the matching entities without YAML configuration.
+Native Home Assistant custom integration for the CFX generations supported by Dometic Mobile Cooling 2.0.32: **CFX2, CFX3 and CFX5**. It discovers a nearby cooler automatically, connects locally over Bluetooth, selects DDM1 or DDM2 from the verified GATT service, detects its product type and compartment count, and creates the matching entities without YAML configuration.
 
 > **Status: hardware validation needed.** Both codecs, protocol selection and the Home Assistant structure are tested without hardware. Each generation still needs a physical connection test before this is production-ready.
 
@@ -38,8 +38,8 @@ These changes remove the most plausible triggers for the communication fault. Th
 
 - Bluetooth discovery from both DDM1 and DDM2 service UUIDs, with Dometic name-prefix fallbacks
 - Service-based protocol validation before any CFX command is sent
-- App-compatible BLE setup order: connect first, settle for two seconds, then
-  request Just Works encryption/bonding and start subscriptions
+- Direct BLE connection without forced operating-system pairing; this avoids
+  CFX5 `AuthenticationCanceled` failures observed with BlueZ
 - CFX3 PING → ACK → HELLO → ACK handshake from the original app
 - Automatic distinction between CFX2 (`MC2`/`MC3`) and CFX5 (`MC1`)
 - Automatic detection of:
@@ -88,7 +88,7 @@ No MAC address, product type or zone count is entered manually.
 
 ### Bluetooth adapter or proxy
 
-The integration needs an adapter that supports active BLE connections and pairing. Current ESPHome Bluetooth Proxy protocol support includes pairing, but a directly attached Home Assistant Bluetooth adapter is useful for the first test because it removes the proxy as another variable.
+The integration needs an adapter that supports active BLE connections. A directly attached Home Assistant Bluetooth adapter is useful for the first test because it removes a proxy as another variable.
 
 ## First hardware test
 

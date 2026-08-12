@@ -8,7 +8,7 @@
     "flow_title": "{name}",
     "step": {
       "confirm": {
-        "description": "Set up {name} ({address})? The cooler will be paired over Bluetooth during setup."
+        "description": "Set up {name} ({address})? Home Assistant will connect to the cooler over Bluetooth."
       },
       "user": {
         "data": {"address": "Device"},
