@@ -1,0 +1,44 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "This CFX is already configured",
+      "already_in_progress": "Configuration is already in progress",
+      "no_devices_found": "No Dometic CFX device was found"
+    },
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "description": "Set up {name} ({address})? The cooler will be paired over Bluetooth during setup."
+      },
+      "user": {
+        "data": {
+          "address": "Device"
+        },
+        "description": "Select the Dometic CFX cooler to add."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "compartment_door": {"name": "Compartment {number} door"},
+      "problem": {"name": "Problem"}
+    },
+    "climate": {
+      "compartment": {"name": "Compartment {number}"}
+    },
+    "select": {
+      "battery_protection": {"name": "Battery protection"}
+    },
+    "sensor": {
+      "compartment_temperature": {"name": "Compartment {number} temperature"},
+      "voltage": {"name": "Voltage"},
+      "active_errors": {"name": "Active errors"},
+      "power_source": {"name": "Power source"},
+      "product_type": {"name": "Product type"}
+    },
+    "switch": {
+      "cooler_power": {"name": "Cooler power"},
+      "ice_maker": {"name": "Ice maker"}
+    }
+  }
+}

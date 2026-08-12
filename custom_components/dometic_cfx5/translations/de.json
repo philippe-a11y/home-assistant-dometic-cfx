@@ -1,0 +1,38 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Diese CFX ist bereits eingerichtet",
+      "already_in_progress": "Die Einrichtung läuft bereits",
+      "no_devices_found": "Kein Dometic-CFX-Gerät gefunden"
+    },
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "description": "{name} ({address}) einrichten? Die Kühlbox wird während der Einrichtung über Bluetooth gekoppelt."
+      },
+      "user": {
+        "data": {"address": "Gerät"},
+        "description": "Wähle die Dometic-CFX-Kühlbox aus."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "compartment_door": {"name": "Fach {number} Deckel"},
+      "problem": {"name": "Störung"}
+    },
+    "climate": {"compartment": {"name": "Fach {number}"}},
+    "select": {"battery_protection": {"name": "Batterieschutz"}},
+    "sensor": {
+      "compartment_temperature": {"name": "Fach {number} Temperatur"},
+      "voltage": {"name": "Spannung"},
+      "active_errors": {"name": "Aktive Fehler"},
+      "power_source": {"name": "Stromquelle"},
+      "product_type": {"name": "Produkttyp"}
+    },
+    "switch": {
+      "cooler_power": {"name": "Kühlbox"},
+      "ice_maker": {"name": "Eisbereiter"}
+    }
+  }
+}

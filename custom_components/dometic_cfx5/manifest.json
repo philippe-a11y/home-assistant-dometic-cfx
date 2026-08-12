@@ -1,0 +1,32 @@
+{
+  "domain": "dometic_cfx5",
+  "name": "Dometic CFX",
+  "bluetooth": [
+    {
+      "service_uuid": "537a0300-0995-481f-926c-1604e23fd515"
+    },
+    {
+      "service_uuid": "537a0400-0995-481f-926c-1604e23fd515"
+    },
+    {
+      "local_name": "CFX*"
+    },
+    {
+      "local_name": "MC1*"
+    },
+    {
+      "local_name": "MC2*"
+    },
+    {
+      "local_name": "MC3*"
+    }
+  ],
+  "codeowners": ["@philippe-a11y"],
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/philippe-a11y/home-assistant-dometic-cfx",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/philippe-a11y/home-assistant-dometic-cfx/issues",
+  "version": "0.2.0"
+}
