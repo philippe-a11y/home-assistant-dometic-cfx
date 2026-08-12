@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="custom_components/dometic_cfx5/brand/dark_logo.png">
+    <img src="custom_components/dometic_cfx5/brand/logo.png" alt="Dometic CFX" width="470">
+  </picture>
+</p>
+
 # Dometic CFX for Home Assistant
 
 Native Home Assistant custom integration for the CFX generations supported by Dometic Mobile Cooling 2.0.32: **CFX2, CFX3 and CFX5**. It discovers a nearby cooler automatically, pairs it, selects DDM1 or DDM2 from the verified GATT service, detects its product type and compartment count, and creates the matching entities without YAML configuration.
@@ -31,7 +38,8 @@ These changes remove the most plausible triggers for the communication fault. Th
 
 - Bluetooth discovery from both DDM1 and DDM2 service UUIDs, with Dometic name-prefix fallbacks
 - Service-based protocol validation before any CFX command is sent
-- BLE pairing/bonding through Home Assistant (`pair=True`)
+- App-compatible BLE setup order: connect first, settle for two seconds, then
+  request Just Works encryption/bonding and start subscriptions
 - CFX3 PING → ACK → HELLO → ACK handshake from the original app
 - Automatic distinction between CFX2 (`MC2`/`MC3`) and CFX5 (`MC1`)
 - Automatic detection of:

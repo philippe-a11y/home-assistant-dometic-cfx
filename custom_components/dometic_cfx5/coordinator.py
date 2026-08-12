@@ -25,6 +25,7 @@ from .const import (
     DDM2_WRITE_UUID,
     DEFAULT_NAME,
     INITIAL_DATA_TIMEOUT_SECONDS,
+    PAIRING_SETTLE_SECONDS,
     UPDATE_INTERVAL_SECONDS,
 )
 from .protocol import (
@@ -67,7 +68,7 @@ ProtocolName = Literal["ddm1", "ddm2"]
 
 
 class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
-    """Maintain a bonded BLE connection for any app-supported CFX family."""
+    """Maintain a BLE connection for any app-supported CFX family."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
@@ -232,8 +233,40 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             return
         raise UpdateFailed("CFX protocol has not been selected")
 
+    async def _async_initialize_connection(
+        self, ble_device: Any
+    ) -> BleakClientWithServiceCache:
+        """Connect, enable link encryption and initialize one CFX session."""
+
+        client: BleakClientWithServiceCache | None = None
+        self._initial_data.clear()
+        try:
+            client = await establish_connection(
+                BleakClientWithServiceCache,
+                ble_device,
+                DEFAULT_NAME,
+                disconnected_callback=self._disconnected_callback,
+                pair=False,
+            )
+            # Match the working ESPHome client: establish the BLE link first,
+            # let it settle like Mobile Cooling, then request Just Works
+            # encryption/bonding.
+            await asyncio.sleep(PAIRING_SETTLE_SECONDS)
+            await client.pair()
+            self._select_protocol(client)
+            self._client = client
+            notify_uuid = self._selected_notify_uuid()
+            await client.start_notify(notify_uuid, self._notification_callback)
+            await self._async_subscribe()
+            async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
+                await self._initial_data.wait()
+        except (BleakError, HomeAssistantError, TimeoutError):
+            await self._async_disconnect_failed_client(client)
+            raise
+        return client
+
     async def _async_connect(self) -> None:
-        """Pair, connect, negotiate the protocol and subscribe."""
+        """Connect first, then pair, negotiate the protocol and subscribe."""
 
         async with self._connect_lock:
             if self._client is not None and self._client.is_connected:
@@ -248,29 +281,15 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             detected = family_from_name(ble_device.name)
             if detected is not DeviceFamily.UNKNOWN:
                 self.data.family = detected
-            self._initial_data.clear()
             client: BleakClientWithServiceCache | None = None
             try:
-                client = await establish_connection(
-                    BleakClientWithServiceCache,
-                    ble_device,
-                    DEFAULT_NAME,
-                    disconnected_callback=self._disconnected_callback,
-                    pair=True,
-                )
-                self._select_protocol(client)
-                self._client = client
-                notify_uuid = self._selected_notify_uuid()
-                await client.start_notify(notify_uuid, self._notification_callback)
-                await self._async_subscribe()
-                async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
-                    await self._initial_data.wait()
+                client = await self._async_initialize_connection(ble_device)
             except TimeoutError as err:
                 await self._async_disconnect_failed_client(client)
                 raise UpdateFailed(
                     "Connected to the CFX but did not complete its handshake or initial state"
                 ) from err
-            except (BleakError, UpdateFailed) as err:
+            except (BleakError, HomeAssistantError) as err:
                 await self._async_disconnect_failed_client(client)
                 if isinstance(err, UpdateFailed):
                     raise
