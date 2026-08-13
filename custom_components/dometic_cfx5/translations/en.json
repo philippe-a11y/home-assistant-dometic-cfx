@@ -52,6 +52,12 @@
       },
       "product_type": {
         "name": "Product type"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "power": {
+        "name": "Power"
       }
     },
     "switch": {

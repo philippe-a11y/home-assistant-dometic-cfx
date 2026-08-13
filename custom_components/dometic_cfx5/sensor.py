@@ -9,7 +9,12 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfElectricPotential, UnitOfTemperature
+from homeassistant.const import (
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
+    UnitOfPower,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -36,6 +41,24 @@ SENSORS = (
         value_fn=lambda state: state.voltage,
         device_class=SensorDeviceClass.VOLTAGE,
         native_unit=UnitOfElectricPotential.VOLT,
+    ),
+    SensorDescription(
+        key="current",
+        translation_key="current",
+        value_fn=lambda state: state.current,
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit=UnitOfElectricCurrent.AMPERE,
+    ),
+    SensorDescription(
+        key="power",
+        translation_key="power",
+        value_fn=lambda state: (
+            round(state.voltage * state.current, 1)
+            if state.voltage is not None and state.current is not None
+            else None
+        ),
+        device_class=SensorDeviceClass.POWER,
+        native_unit=UnitOfPower.WATT,
     ),
 )
 

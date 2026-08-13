@@ -52,6 +52,12 @@
       },
       "product_type": {
         "name": "Produkttyp"
+      },
+      "current": {
+        "name": "Strom"
+      },
+      "power": {
+        "name": "Leistung"
       }
     },
     "switch": {
