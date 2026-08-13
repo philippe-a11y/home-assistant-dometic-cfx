@@ -8,31 +8,64 @@
     "flow_title": "{name}",
     "step": {
       "confirm": {
-        "description": "{name} ({address}) einrichten? Home Assistant verbindet sich über Bluetooth mit der Kühlbox."
+        "description": "{name} ({address}) einrichten? Die Kühlbox in den PAIR-Modus versetzen. Home Assistant verbindet und koppelt sie anschließend über Bluetooth."
       },
       "user": {
-        "data": {"address": "Gerät"},
+        "data": {
+          "address": "Gerät"
+        },
         "description": "Wähle die Dometic-CFX-Kühlbox aus."
       }
     }
   },
   "entity": {
     "binary_sensor": {
-      "compartment_door": {"name": "Fach {number} Deckel"},
-      "problem": {"name": "Störung"}
+      "compartment_door": {
+        "name": "Fach {number} Deckel"
+      },
+      "problem": {
+        "name": "Störung"
+      }
     },
-    "climate": {"compartment": {"name": "Fach {number}"}},
-    "select": {"battery_protection": {"name": "Batterieschutz"}},
+    "climate": {
+      "compartment": {
+        "name": "Fach {number}"
+      }
+    },
+    "select": {
+      "battery_protection": {
+        "name": "Batterieschutz"
+      }
+    },
     "sensor": {
-      "compartment_temperature": {"name": "Fach {number} Temperatur"},
-      "voltage": {"name": "Spannung"},
-      "active_errors": {"name": "Aktive Fehler"},
-      "power_source": {"name": "Stromquelle"},
-      "product_type": {"name": "Produkttyp"}
+      "compartment_temperature": {
+        "name": "Fach {number} Temperatur"
+      },
+      "voltage": {
+        "name": "Spannung"
+      },
+      "active_errors": {
+        "name": "Aktive Fehler"
+      },
+      "power_source": {
+        "name": "Stromquelle"
+      },
+      "product_type": {
+        "name": "Produkttyp"
+      }
     },
     "switch": {
-      "cooler_power": {"name": "Kühlbox"},
-      "ice_maker": {"name": "Eisbereiter"}
+      "cooler_power": {
+        "name": "Kühlbox"
+      },
+      "ice_maker": {
+        "name": "Eisbereiter"
+      }
+    },
+    "button": {
+      "repair_bond": {
+        "name": "Bluetooth neu koppeln"
+      }
     }
   }
 }

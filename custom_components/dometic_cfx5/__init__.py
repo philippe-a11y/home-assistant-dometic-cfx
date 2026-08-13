@@ -1,11 +1,14 @@
 """Native Home Assistant integration for Dometic CFX coolers."""
 
+import asyncio
+
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import ADDRESS, BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant, callback
 
+from .bluez_pairing import async_remove_cfx_bluez_bond
 from .const import PLATFORMS
 from .coordinator import DometicCFXCoordinator
 
@@ -16,6 +19,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = DometicCFXCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    reconnect_task: asyncio.Task[None] | None = None
+
+    async def _async_reconnect() -> None:
+        """Run one coalesced reconnect request."""
+
+        await coordinator.async_request_refresh()
 
     @callback
     def _async_seen_again(
@@ -24,9 +33,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ) -> None:
         """Reconnect promptly when a disconnected CFX is seen again."""
 
-        if not coordinator.connected:
-            hass.async_create_task(
-                coordinator.async_request_refresh(),
+        nonlocal reconnect_task
+        if not coordinator.connected and (
+            reconnect_task is None or reconnect_task.done()
+        ):
+            reconnect_task = hass.async_create_task(
+                _async_reconnect(),
                 f"Reconnect Dometic CFX {coordinator.address}",
             )
 
@@ -49,3 +61,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         await entry.runtime_data.async_shutdown()
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the local BlueZ bond when the user deletes a CFX entry.
+
+    Removing and rediscovering the entry is the explicit repair operation for
+    a stale CFX bond. It leaves bonds on phones and other Bluetooth adapters
+    untouched.
+    """
+
+    await async_remove_cfx_bluez_bond(entry.data[CONF_ADDRESS])

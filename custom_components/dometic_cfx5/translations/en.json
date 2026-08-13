@@ -8,31 +8,64 @@
     "flow_title": "{name}",
     "step": {
       "confirm": {
-        "description": "Set up {name} ({address})? Home Assistant will connect to the cooler over Bluetooth."
+        "description": "Set up {name} ({address})? Put the cooler in PAIR mode. Home Assistant will connect and create a Bluetooth bond."
       },
       "user": {
-        "data": {"address": "Device"},
+        "data": {
+          "address": "Device"
+        },
         "description": "Select the Dometic CFX cooler to add."
       }
     }
   },
   "entity": {
     "binary_sensor": {
-      "compartment_door": {"name": "Compartment {number} door"},
-      "problem": {"name": "Problem"}
+      "compartment_door": {
+        "name": "Compartment {number} door"
+      },
+      "problem": {
+        "name": "Problem"
+      }
     },
-    "climate": {"compartment": {"name": "Compartment {number}"}},
-    "select": {"battery_protection": {"name": "Battery protection"}},
+    "climate": {
+      "compartment": {
+        "name": "Compartment {number}"
+      }
+    },
+    "select": {
+      "battery_protection": {
+        "name": "Battery protection"
+      }
+    },
     "sensor": {
-      "compartment_temperature": {"name": "Compartment {number} temperature"},
-      "voltage": {"name": "Voltage"},
-      "active_errors": {"name": "Active errors"},
-      "power_source": {"name": "Power source"},
-      "product_type": {"name": "Product type"}
+      "compartment_temperature": {
+        "name": "Compartment {number} temperature"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
+      "active_errors": {
+        "name": "Active errors"
+      },
+      "power_source": {
+        "name": "Power source"
+      },
+      "product_type": {
+        "name": "Product type"
+      }
     },
     "switch": {
-      "cooler_power": {"name": "Cooler power"},
-      "ice_maker": {"name": "Ice maker"}
+      "cooler_power": {
+        "name": "Cooler power"
+      },
+      "ice_maker": {
+        "name": "Ice maker"
+      }
+    },
+    "button": {
+      "repair_bond": {
+        "name": "Re-pair Bluetooth bond"
+      }
     }
   }
 }

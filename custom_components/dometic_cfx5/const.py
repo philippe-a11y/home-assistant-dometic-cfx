@@ -16,6 +16,7 @@ SERVICE_UUIDS = frozenset((DDM1_SERVICE_UUID, DDM2_SERVICE_UUID))
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CLIMATE,
     Platform.SELECT,
     Platform.SENSOR,

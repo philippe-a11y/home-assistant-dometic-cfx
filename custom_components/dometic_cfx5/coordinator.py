@@ -1,9 +1,10 @@
 """Bluetooth connection and state coordinator for Dometic CFX coolers."""
 
 import asyncio
-from datetime import timedelta
 import logging
-from typing import Any, Literal
+from contextlib import suppress
+from datetime import timedelta
+from typing import Any, Literal, NoReturn
 
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.exc import BleakError
@@ -16,6 +17,12 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .ble_client import DometicCFXBleakClient
+from .bluez_pairing import (
+    async_prepare_cfx_bluez,
+    async_remove_cfx_bluez_bond,
+    is_cfx_bond_mismatch_error,
+)
 from .const import (
     DDM1_NOTIFY_UUID,
     DDM1_SERVICE_UUID,
@@ -91,6 +98,7 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
         self._ddm1_handshake_stage: Literal["idle", "ping", "hello", "ready"] = "idle"
         self._connect_lock = asyncio.Lock()
         self._write_lock = asyncio.Lock()
+        self._initializing = False
         self._shutting_down = False
 
     @callback
@@ -101,6 +109,9 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             return
         self._client = None
         self.connected = False
+        if self._initializing:
+            _LOGGER.debug("CFX disconnected while its session was being initialized")
+            return
         if not self._shutting_down:
             self.async_set_update_error(UpdateFailed("Bluetooth disconnected"))
 
@@ -131,6 +142,12 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
         frame = bytes(data)
         if not frame:
             return
+        _LOGGER.debug(
+            "CFX RX %s (%s): %s",
+            self.address,
+            self.protocol or "unselected",
+            frame.hex(" "),
+        )
 
         if self.protocol == "ddm1":
             if frame[0] == DDM1Action.ACK:
@@ -239,24 +256,31 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
 
         client: BleakClientWithServiceCache | None = None
         self._initial_data.clear()
+        self._initializing = True
         try:
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                ble_device,
-                DEFAULT_NAME,
-                disconnected_callback=self._disconnected_callback,
-                pair=False,
-            )
-            self._select_protocol(client)
-            self._client = client
-            notify_uuid = self._selected_notify_uuid()
-            await client.start_notify(notify_uuid, self._notification_callback)
-            await self._async_subscribe()
-            async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
-                await self._initial_data.wait()
+            async with async_prepare_cfx_bluez(ble_device.address) as paired_locally:
+                client = await establish_connection(
+                    DometicCFXBleakClient,
+                    ble_device,
+                    DEFAULT_NAME,
+                    disconnected_callback=self._disconnected_callback,
+                    max_attempts=2,
+                    use_services_cache=True,
+                    pair=not paired_locally,
+                    cfx_use_bluez_cache=paired_locally,
+                )
+                self._select_protocol(client)
+                self._client = client
+                notify_uuid = self._selected_notify_uuid()
+                await client.start_notify(notify_uuid, self._notification_callback)
+                await self._async_subscribe()
+                async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
+                    await self._initial_data.wait()
         except (BleakError, HomeAssistantError, TimeoutError):
             await self._async_disconnect_failed_client(client)
             raise
+        finally:
+            self._initializing = False
         return client
 
     async def _async_connect(self) -> None:
@@ -278,18 +302,26 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             client: BleakClientWithServiceCache | None = None
             try:
                 client = await self._async_initialize_connection(ble_device)
-            except TimeoutError as err:
+            except (BleakError, HomeAssistantError, TimeoutError) as err:
                 await self._async_disconnect_failed_client(client)
-                raise UpdateFailed(
-                    "Connected to the CFX but did not complete its handshake or initial state"
-                ) from err
-            except (BleakError, HomeAssistantError) as err:
-                await self._async_disconnect_failed_client(client)
-                if isinstance(err, UpdateFailed):
-                    raise
-                raise UpdateFailed(
-                    f"Unable to communicate with the CFX: {err}"
-                ) from err
+                if not is_cfx_bond_mismatch_error(err):
+                    self._raise_update_failed(err)
+                # The cooler was likely factory reset and forgot its long-term
+                # key while BlueZ kept the old bond. Remove the stale local
+                # bond once and immediately retry with fresh Just Works
+                # pairing, mirroring the ESPHome re-pair recovery.
+                _LOGGER.warning(
+                    "CFX %s rejected the stored bond (%s); removing the local "
+                    "bond and pairing again",
+                    self.address,
+                    err,
+                )
+                await async_remove_cfx_bluez_bond(self.address)
+                try:
+                    client = await self._async_initialize_connection(ble_device)
+                except (BleakError, HomeAssistantError, TimeoutError) as retry_err:
+                    await self._async_disconnect_failed_client(client)
+                    self._raise_update_failed(retry_err)
 
             self.connected = True
             _LOGGER.info(
@@ -299,6 +331,41 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
                 self.protocol.upper(),
                 self.data.compartment_count,
             )
+
+    @staticmethod
+    def _raise_update_failed(err: BaseException) -> NoReturn:
+        """Normalize connection errors into one UpdateFailed."""
+
+        if isinstance(err, UpdateFailed):
+            raise err
+        if isinstance(err, TimeoutError):
+            raise UpdateFailed(
+                "Connected to the CFX but did not complete its handshake or initial state"
+            ) from err
+        raise UpdateFailed(f"Unable to communicate with the CFX: {err}") from err
+
+    async def async_repair_bond(self) -> None:
+        """Drop the local BlueZ bond and rebuild the connection.
+
+        User-initiated recovery for a cooler that was factory reset or whose
+        bond is otherwise unusable. The next refresh performs fresh Just
+        Works pairing.
+        """
+
+        async with self._connect_lock:
+            client = self._client
+            self._client = None
+            self.connected = False
+            if client is not None and client.is_connected:
+                with suppress(BleakError):
+                    await client.disconnect()
+            removed = await async_remove_cfx_bluez_bond(self.address)
+            _LOGGER.info(
+                "CFX re-pair requested for %s (stale bond removed: %s)",
+                self.address,
+                removed,
+            )
+        await self.async_request_refresh()
 
     async def _async_disconnect_failed_client(
         self, client: BleakClientWithServiceCache | None
@@ -329,6 +396,12 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             if self._write_uuid is None:
                 raise HomeAssistantError("CFX write characteristic is not selected")
             try:
+                _LOGGER.debug(
+                    "CFX TX %s (%s): %s",
+                    self.address,
+                    self.protocol or "unselected",
+                    frame.hex(" "),
+                )
                 await client.write_gatt_char(self._write_uuid, frame, response=True)
             except BleakError as err:
                 if client.is_connected:

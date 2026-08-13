@@ -38,8 +38,8 @@ These changes remove the most plausible triggers for the communication fault. Th
 
 - Bluetooth discovery from both DDM1 and DDM2 service UUIDs, with Dometic name-prefix fallbacks
 - Service-based protocol validation before any CFX command is sent
-- Direct BLE connection without forced operating-system pairing; this avoids
-  CFX5 `AuthenticationCanceled` failures observed with BlueZ
+- CFX-specific BlueZ bonding sequence matching Mobile Cooling: physical link,
+  Just Works bond, then GATT service discovery
 - CFX3 PING → ACK → HELLO → ACK handshake from the original app
 - Automatic distinction between CFX2 (`MC2`/`MC3`) and CFX5 (`MC1`)
 - Automatic detection of:
@@ -80,7 +80,9 @@ Alternatively, open **HACS → Integrations → ⋮ → Custom repositories**, a
    ```
 
 2. Restart Home Assistant.
-3. Turn on the CFX and make sure Bluetooth is enabled. For a CFX3, open its Bluetooth menu and start **PAIR** mode for the first connection.
+3. Turn on the CFX and make sure Bluetooth is enabled. Open its Bluetooth menu
+   and start **PAIR** mode for the first connection; the 60-second window must
+   still be active when Home Assistant begins setup.
 4. Stop the Dometic app and disable the old ESPHome BLE client while testing. A competing connection can prevent Home Assistant from connecting.
 5. Open **Settings → Devices & services**. The cooler should appear as a discovered **Dometic CFX** integration. Alternatively select **Add integration → Dometic CFX**.
 
@@ -110,6 +112,20 @@ Then test in this order:
 6. Only then test global power, battery protection and the ice maker if present.
 
 If setup fails, collect the Home Assistant debug log from the first discovery through disconnect. Do not run the Dometic app or the old ESPHome client at the same time.
+
+### Repairing a stale BlueZ bond
+
+If the log reports both `already bonded in BlueZ` and `Physical BLE reconnect`
+but never reports `GATT services are ready`, the local BlueZ bond is stale.
+Remove the Dometic CFX integration entry in Home Assistant. Starting with
+v0.2.17 this also removes only that CFX bond from the Home Assistant Bluetooth
+adapter. Then put the cooler's Bluetooth menu into **PAIR** mode and add the
+automatically discovered device again.
+
+On bonded reconnects, the integration asks BlueZ to perform its combined
+connect, security, and GATT `Pair` operation before Bleak starts a separate
+`Connect`. This avoids BlueZ rejecting the app-style post-connect security
+request with `org.bluez.Error.InProgress`.
 
 ## Protocol notes
 
