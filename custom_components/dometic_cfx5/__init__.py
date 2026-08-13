@@ -6,8 +6,8 @@ import logging
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import ADDRESS, BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import CONF_ADDRESS, EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 
 from .bluez_pairing import async_remove_cfx_bluez_bond
@@ -64,6 +64,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _async_seen_again,
             BluetoothCallbackMatcher({ADDRESS: entry.data[CONF_ADDRESS]}),
             bluetooth.BluetoothScanningMode.ACTIVE,
+        )
+    )
+
+    async def _async_disconnect_on_stop(_event: Event) -> None:
+        """Release the BLE connection when Home Assistant shuts down.
+
+        Without a clean disconnect the cooler keeps believing the old
+        session is alive until its link supervision timeout expires, stops
+        advertising in the meantime, and is unreachable for the first
+        minutes after a restart.
+        """
+
+        await coordinator.async_shutdown()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STOP, _async_disconnect_on_stop
         )
     )
 
