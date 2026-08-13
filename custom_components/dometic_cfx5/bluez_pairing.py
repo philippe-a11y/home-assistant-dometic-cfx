@@ -33,14 +33,15 @@ BONDED_PREFLIGHT_TIMEOUT_SECONDS = 45.0
 FRESH_PAIR_TIMEOUT_SECONDS = 30.0
 
 _AUTH_FAILURE_MARKERS = (
+    # Genuine bond-defect signatures only. AuthenticationCanceled and
+    # AuthenticationRejected are deliberately NOT listed: the CFX returns
+    # those when it is simply not in Bluetooth pairing mode, and treating
+    # them as a stale bond would destroy a perfectly good local bond on
+    # every transient refusal.
     "org.bluez.error.authenticationfailed",
-    "org.bluez.error.authenticationcanceled",
-    "org.bluez.error.authenticationrejected",
-    "org.bluez.error.authenticationtimeout",
     "authentication failed",
     "insufficient authentication",
     "insufficient encryption",
-    "pairing rejected",
 )
 
 
@@ -414,7 +415,16 @@ async def async_prepare_cfx_bluez(address: str) -> AsyncIterator[bool]:
                     f"CFX Just Works pairing timed out for {address}"
                 ) from err
             if reply.message_type == MessageType.ERROR:
-                raise _reply_error(reply, "CFX Just Works pairing failed")
+                pair_error = _reply_error(reply, "CFX Just Works pairing failed")
+                if "authenticationcanceled" in str(pair_error).lower():
+                    _LOGGER.warning(
+                        "CFX %s refused the pairing attempt. Put the cooler "
+                        "into Bluetooth pairing mode (hold its Bluetooth "
+                        "button until the symbol blinks) and reload the "
+                        "integration or press the re-pair button",
+                        address,
+                    )
+                raise pair_error
             await _set_trusted(bus, device_path)
             _LOGGER.info("CFX %s bonded successfully with BlueZ", address)
 
