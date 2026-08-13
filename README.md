@@ -113,14 +113,29 @@ Then test in this order:
 
 If setup fails, collect the Home Assistant debug log from the first discovery through disconnect. Do not run the Dometic app or the old ESPHome client at the same time.
 
-### Repairing a stale BlueZ bond
+### Troubleshooting pairing
 
-If the log reports both `already bonded in BlueZ` and `Physical BLE reconnect`
-but never reports `GATT services are ready`, the local BlueZ bond is stale.
-Remove the Dometic CFX integration entry in Home Assistant. Starting with
-v0.2.17 this also removes only that CFX bond from the Home Assistant Bluetooth
-adapter. Then put the cooler's Bluetooth menu into **PAIR** mode and add the
-automatically discovered device again.
+`AuthenticationCanceled` in the log means the cooler refused a pairing
+attempt, usually because it is not in Bluetooth pairing mode or because its
+internal Bluetooth state is stuck (its own bond slot still holds an old
+partner). Since v0.2.20 a stale local bond is removed and re-paired
+automatically, and the **Re-pair Bluetooth bond** button performs the same
+recovery on demand. The proven recovery sequence for a cooler that keeps
+refusing is:
+
+1. Disconnect the cooler from power for a few seconds and reconnect it.
+   This clears its stuck Bluetooth state; its settings and bond table
+   survive, and a factory reset is normally not needed.
+2. Put the cooler into Bluetooth pairing mode (hold its Bluetooth button
+   until the symbol blinks). Pairing mode times out after a few minutes,
+   so continue immediately.
+3. Press the **Re-pair Bluetooth bond** button (or reload the integration).
+   A successful bond logs `bonded successfully with BlueZ` within seconds.
+
+The bond is stored persistently by BlueZ, so Home Assistant restarts and
+host reboots reconnect without pairing mode. Make sure no other central is
+using the cooler: do not run the Dometic app or an ESPHome client at the
+same time, the CFX serves only one connection.
 
 On bonded reconnects, the integration asks BlueZ to perform its combined
 connect, security, and GATT `Pair` operation before Bleak starts a separate
