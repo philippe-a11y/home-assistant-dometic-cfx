@@ -1,23 +1,39 @@
 """Native Home Assistant integration for Dometic CFX coolers."""
 
 import asyncio
+import logging
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import ADDRESS, BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .bluez_pairing import async_remove_cfx_bluez_bond
 from .const import PLATFORMS
 from .coordinator import DometicCFXCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a discovered CFX2, CFX3 or CFX5."""
 
     coordinator = DometicCFXCoordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady as err:
+        # Load the entry anyway. The re-pair button must exist precisely when
+        # the first connection fails (stale bond, cooler not in pairing mode,
+        # cooler asleep). All other entities stay unavailable until the
+        # Bluetooth seen-again callback or the regular poll reconnects.
+        _LOGGER.warning(
+            "CFX %s is not reachable yet, loading anyway so the re-pair "
+            "button is available: %s",
+            entry.data[CONF_ADDRESS],
+            err,
+        )
     entry.runtime_data = coordinator
     reconnect_task: asyncio.Task[None] | None = None
 
