@@ -234,41 +234,11 @@ async def _disconnect_stale_link(
         ) from err
 
 
-async def _force_encrypted_link(
-    bus: MessageBus, address: str, device_path: str
-) -> None:
-    """Connect and actively establish link encryption with the stored keys.
+async def _find_notify_char(
+    bus: MessageBus, device_path: str
+) -> str | None:
+    """Return the D-Bus path of the DDM notify characteristic, if exported."""
 
-    The CFX never sends a Security Request and silently drops centrals that
-    stay unencrypted for more than a few seconds, and BlueZ as a central does
-    not start encryption on its own after Connect. Subscribing to the DDM
-    notify characteristic forces a CCCD write whose security error makes the
-    kernel encrypt the link with the stored long-term key - the BlueZ
-    equivalent of ESPHome's esp_ble_set_encryption() right after connect.
-    """
-
-    _LOGGER.debug("Connecting CFX %s to force link encryption", address)
-    try:
-        async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
-            reply = await bus.call(
-                Message(
-                    destination=BLUEZ_SERVICE,
-                    path=device_path,
-                    interface=DEVICE_INTERFACE,
-                    member="Connect",
-                )
-            )
-    except TimeoutError as err:
-        raise BleakError(
-            f"Bonded CFX connect timed out for {address}"
-        ) from err
-    if reply.message_type == MessageType.ERROR and reply.error_name not in (
-        "org.bluez.Error.AlreadyConnected",
-    ):
-        raise _reply_error(reply, "Bonded CFX connect failed")
-
-    # Locate the DDM notify characteristic below this device.
-    notify_path: str | None = None
     objects = await _managed_objects(bus)
     for path, interfaces in objects.items():
         if not path.startswith(device_path):
@@ -281,18 +251,71 @@ async def _force_encrypted_link(
             DDM1_NOTIFY_UUID,
             DDM2_NOTIFY_UUID,
         ):
-            notify_path = path
-            break
-    if notify_path is None:
-        _LOGGER.debug(
-            "CFX %s GATT objects not exported yet; leaving encryption to the "
-            "first notification subscription",
-            address,
-        )
-        return
+            return path
+    return None
 
-    _LOGGER.debug("Forcing CFX link encryption via StartNotify on %s", notify_path)
+
+async def _force_encrypted_link(
+    bus: MessageBus, address: str, device_path: str
+) -> None:
+    """Connect and actively establish link encryption with the stored keys.
+
+    The CFX never sends a Security Request, stalls GATT service discovery
+    while the link is unencrypted, and terminates the connection after only
+    a few seconds. BlueZ's Connect call in turn waits for service discovery,
+    so awaiting it first loses the race every time. Instead the Connect call
+    runs in the background while we poll for the DDM notify characteristic -
+    BlueZ exports cached GATT objects for bonded devices immediately on
+    connect - and subscribe to it as soon as it appears. The CCCD write's
+    security error makes the kernel encrypt the link with the stored
+    long-term key within the cooler's patience window, discovery completes,
+    and Connect returns. This is the BlueZ equivalent of ESPHome's
+    esp_ble_set_encryption() right after connect.
+    """
+
+    _LOGGER.debug("Connecting CFX %s to force link encryption", address)
+    connect_task = asyncio.ensure_future(
+        bus.call(
+            Message(
+                destination=BLUEZ_SERVICE,
+                path=device_path,
+                interface=DEVICE_INTERFACE,
+                member="Connect",
+            )
+        )
+    )
     try:
+        notify_path: str | None = None
+        deadline = asyncio.get_event_loop().time() + 12.0
+        while notify_path is None:
+            if connect_task.done():
+                reply = connect_task.result()
+                if reply.message_type == MessageType.ERROR and reply.error_name not in (
+                    "org.bluez.Error.AlreadyConnected",
+                ):
+                    raise _reply_error(reply, "Bonded CFX connect failed")
+                # Connect finished (services resolved) - look one last time.
+                notify_path = await _find_notify_char(bus, device_path)
+                if notify_path is None:
+                    _LOGGER.debug(
+                        "CFX %s connected but exports no DDM characteristic; "
+                        "leaving encryption to the first subscription",
+                        address,
+                    )
+                    return
+                break
+            notify_path = await _find_notify_char(bus, device_path)
+            if notify_path is not None:
+                break
+            if asyncio.get_event_loop().time() > deadline:
+                raise BleakError(
+                    f"Bonded CFX connect timed out for {address}"
+                )
+            await asyncio.sleep(0.15)
+
+        _LOGGER.debug(
+            "Forcing CFX link encryption via StartNotify on %s", notify_path
+        )
         async with asyncio.timeout(15.0):
             reply = await bus.call(
                 Message(
@@ -302,25 +325,35 @@ async def _force_encrypted_link(
                     member="StartNotify",
                 )
             )
+        if reply.message_type == MessageType.ERROR and reply.error_name not in (
+            "org.bluez.Error.InProgress",
+            "org.bluez.Error.AlreadyConnected",
+        ):
+            raise _reply_error(reply, "Forcing CFX link encryption failed")
+        with suppress(Exception):
+            await bus.call(
+                Message(
+                    destination=BLUEZ_SERVICE,
+                    path=notify_path,
+                    interface="org.bluez.GattCharacteristic1",
+                    member="StopNotify",
+                )
+            )
+        _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
+        # Let the background Connect finish service discovery cleanly.
+        if not connect_task.done():
+            with suppress(TimeoutError):
+                async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
+                    await asyncio.shield(connect_task)
     except TimeoutError as err:
         raise BleakError(
             f"Forcing CFX link encryption timed out for {address}"
         ) from err
-    if reply.message_type == MessageType.ERROR and reply.error_name not in (
-        "org.bluez.Error.InProgress",
-        "org.bluez.Error.AlreadyConnected",
-    ):
-        raise _reply_error(reply, "Forcing CFX link encryption failed")
-    with suppress(Exception):
-        await bus.call(
-            Message(
-                destination=BLUEZ_SERVICE,
-                path=notify_path,
-                interface="org.bluez.GattCharacteristic1",
-                member="StopNotify",
-            )
-        )
-    _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
+    finally:
+        if not connect_task.done():
+            connect_task.cancel()
+            with suppress(Exception):
+                await connect_task
 
 
 async def _pair_bonded_cfx_before_bleak(
