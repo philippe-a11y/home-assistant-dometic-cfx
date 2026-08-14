@@ -148,9 +148,19 @@ async def _mgmt_force_encryption(
     except (IndexError, ValueError):
         adapter_index = 0
     addr_type = 2 if address_type == "random" else 1
-    status = await asyncio.to_thread(
-        _mgmt_pair_device_blocking, adapter_index, address, addr_type, 10.0
-    )
+    try:
+        status = await asyncio.to_thread(
+            _mgmt_pair_device_blocking, adapter_index, address, addr_type, 10.0
+        )
+    except OSError as err:
+        raise BleakError(
+            f"CFX {address} mgmt encryption unavailable: [Errno {err.errno}] "
+            f"{err.strerror or err}"
+        ) from err
+    except TimeoutError as err:
+        raise BleakError(
+            f"CFX {address} mgmt encryption timed out"
+        ) from err
     if status != 0:
         raise BleakError(
             f"CFX {address} link encryption via mgmt failed with status "
