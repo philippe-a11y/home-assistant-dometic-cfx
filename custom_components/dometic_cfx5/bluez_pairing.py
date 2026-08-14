@@ -102,6 +102,10 @@ def _mgmt_pair_device_blocking(
             pystruct.pack("<HHH", _MGMT_OP_PAIR_DEVICE, adapter_index, len(params))
             + params
         )
+        _LOGGER.debug(
+            "mgmt: sending Pair Device on hci%d addr_type=%d", adapter_index,
+            addr_type,
+        )
         sock.send(cmd)
 
         deadline = time.monotonic() + timeout
@@ -128,6 +132,11 @@ def _mgmt_pair_device_blocking(
             if ev_index != adapter_index or len(payload) < 3:
                 continue
             (ev_opcode,) = pystruct.unpack("<H", payload[:2])
+            _LOGGER.debug(
+                "mgmt: event code=%#06x opcode=%#06x status=%#04x",
+                ev_code, ev_opcode,
+                payload[2] if len(payload) > 2 else 0xFF,
+            )
             if ev_opcode != _MGMT_OP_PAIR_DEVICE:
                 continue
             if ev_code == _MGMT_EV_CMD_STATUS:
@@ -161,6 +170,7 @@ async def _mgmt_force_encryption(
         raise BleakError(
             f"CFX {address} mgmt encryption timed out"
         ) from err
+    _LOGGER.debug("mgmt: Pair Device returned status %#04x", status)
     if status != 0:
         raise BleakError(
             f"CFX {address} link encryption via mgmt failed with status "
