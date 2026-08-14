@@ -300,28 +300,53 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             if detected is not DeviceFamily.UNKNOWN:
                 self.data.family = detected
             client: BleakClientWithServiceCache | None = None
-            try:
-                client = await self._async_initialize_connection(ble_device)
-            except (BleakError, HomeAssistantError, TimeoutError) as err:
-                await self._async_disconnect_failed_client(client)
-                if not is_cfx_bond_mismatch_error(err):
-                    self._raise_update_failed(err)
-                # The cooler was likely factory reset and forgot its long-term
-                # key while BlueZ kept the old bond. Remove the stale local
-                # bond once and immediately retry with fresh Just Works
-                # pairing, mirroring the ESPHome re-pair recovery.
-                _LOGGER.warning(
-                    "CFX %s rejected the stored bond (%s); removing the local "
-                    "bond and pairing again",
-                    self.address,
-                    err,
-                )
-                await async_remove_cfx_bluez_bond(self.address)
+            # The CFX is a flaky peer: the Mobile Cooling app itself retries
+            # the LE connection many times before one survives long enough to
+            # encrypt. Mirror that within a single update cycle instead of
+            # waiting a full interval between attempts.
+            attempts = 6
+            last_err: BaseException | None = None
+            for attempt in range(1, attempts + 1):
                 try:
                     client = await self._async_initialize_connection(ble_device)
-                except (BleakError, HomeAssistantError, TimeoutError) as retry_err:
+                    last_err = None
+                    break
+                except (BleakError, HomeAssistantError, TimeoutError) as err:
                     await self._async_disconnect_failed_client(client)
-                    self._raise_update_failed(retry_err)
+                    client = None
+                    last_err = err
+                    if is_cfx_bond_mismatch_error(err):
+                        _LOGGER.warning(
+                            "CFX %s rejected the stored bond (%s); removing "
+                            "the local bond and pairing again",
+                            self.address,
+                            err,
+                        )
+                        await async_remove_cfx_bluez_bond(self.address)
+                        try:
+                            client = await self._async_initialize_connection(
+                                ble_device
+                            )
+                            last_err = None
+                        except (
+                            BleakError,
+                            HomeAssistantError,
+                            TimeoutError,
+                        ) as retry_err:
+                            await self._async_disconnect_failed_client(client)
+                            client = None
+                            last_err = retry_err
+                        break
+                    _LOGGER.debug(
+                        "CFX %s connect attempt %d/%d failed transiently: %s",
+                        self.address,
+                        attempt,
+                        attempts,
+                        err,
+                    )
+                    await asyncio.sleep(0.5)
+            if last_err is not None:
+                self._raise_update_failed(last_err)
 
             self.connected = True
             _LOGGER.info(

@@ -394,132 +394,74 @@ async def _find_notify_char(
 async def _force_encrypted_link(
     bus: MessageBus, address: str, device_path: str
 ) -> None:
-    """Connect and actively establish link encryption with the stored keys.
+    """Connect via BlueZ and wait for the encrypted, service-resolved link.
 
-    Mirrors the Mobile Cooling app's bonded reconnect exactly as captured in
-    its HCI snoop: connect, then the central proactively starts link-layer
-    encryption. The CFX neither sends a Security Request nor returns ATT
-    security errors, so the encryption must be initiated explicitly through
-    the kernel mgmt interface; no GATT-based trigger can work.
+    The Mobile Cooling HCI snoop shows the CFX is simply a difficult peer:
+    the app itself retries the LE connection many times before one attempt
+    survives long enough to encrypt (the central sends LE Start Encryption
+    ~270ms after connecting, which BlueZ does automatically for a bonded
+    device). There is no user-space "encrypt now" call - mgmt Pair Device
+    is refused with Already Paired on a bonded device. So the robust
+    approach is the app's approach: ask BlueZ to Connect, and on the
+    transient le-connection-abort-by-local just let the caller retry
+    quickly. Once BlueZ reports ServicesResolved the link is encrypted and
+    Bleak can attach.
     """
 
-    _LOGGER.debug("Connecting CFX %s to force link encryption", address)
-    connect_task = asyncio.ensure_future(
-        bus.call(
+    _LOGGER.debug("Connecting CFX %s via BlueZ (bonded, encrypted)", address)
+    try:
+        async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
+            reply = await bus.call(
+                Message(
+                    destination=BLUEZ_SERVICE,
+                    path=device_path,
+                    interface=DEVICE_INTERFACE,
+                    member="Connect",
+                )
+            )
+    except TimeoutError as err:
+        raise BleakError(f"Bonded CFX connect timed out for {address}") from err
+
+    if reply.message_type == MessageType.ERROR:
+        if reply.error_name not in ("org.bluez.Error.AlreadyConnected",):
+            body_text = " ".join(str(part) for part in reply.body).lower()
+            if "abort" in body_text or "timeout" in body_text:
+                # Transient - the cooler is a flaky peer, retry quickly.
+                raise BleakError(
+                    f"CFX {address} link dropped during connect "
+                    f"({reply.error_name}); will retry"
+                )
+            raise _reply_error(reply, "Bonded CFX connect failed")
+
+    # Connect returned success (or already connected): BlueZ only completes
+    # Connect for a bonded device after the link is encrypted and services
+    # are resolved. Confirm ServicesResolved for good measure.
+    for _ in range(20):
+        reply = await bus.call(
             Message(
                 destination=BLUEZ_SERVICE,
                 path=device_path,
-                interface=DEVICE_INTERFACE,
-                member="Connect",
-            )
-        )
-    )
-
-    async def _device_props(bus_: MessageBus, path_: str) -> dict[str, Any]:
-        reply_ = await bus_.call(
-            Message(
-                destination=BLUEZ_SERVICE,
-                path=path_,
                 interface="org.freedesktop.DBus.Properties",
-                member="GetAll",
-                signature="s",
-                body=[DEVICE_INTERFACE],
+                member="Get",
+                signature="ss",
+                body=[DEVICE_INTERFACE, "ServicesResolved"],
             )
         )
-        if reply_.message_type == MessageType.ERROR:
-            return {}
-        return reply_.body[0]
-
-    def _connect_reply_check() -> None:
-        reply = connect_task.result()
-        if reply.message_type == MessageType.ERROR and reply.error_name not in (
-            "org.bluez.Error.AlreadyConnected",
+        if (
+            reply.message_type != MessageType.ERROR
+            and reply.body
+            and bool(reply.body[0].value)
         ):
-            _LOGGER.warning(
-                "CFX %s Connect failed during encryption preflight: %s %s",
+            _LOGGER.info(
+                "CFX %s connected with an encrypted, service-resolved link",
                 address,
-                reply.error_name,
-                reply.body,
             )
-            raise _reply_error(reply, "Bonded CFX connect failed")
-
-    try:
-        # Phase 1: wait for the physical link.
-        address_type = "public"
-        deadline = asyncio.get_event_loop().time() + 15.0
-        while True:
-            props = await _device_props(bus, device_path)
-            at = props.get("AddressType")
-            if at is not None:
-                address_type = str(at.value)
-            if props.get("Connected") and props["Connected"].value:
-                break
-            if connect_task.done():
-                _connect_reply_check()
-                break
-            if asyncio.get_event_loop().time() > deadline:
-                raise BleakError(
-                    f"Bonded CFX connect timed out for {address}"
-                )
-            await asyncio.sleep(0.1)
-
-        # Phase 2: proactively encrypt, like the app does ~270ms after
-        # connect. The stored long-term key lives in the kernel.
-        _LOGGER.debug(
-            "Starting LE link encryption for CFX %s via mgmt (%s address)",
-            address,
-            address_type,
-        )
-        await _mgmt_force_encryption(device_path, address, address_type)
-        _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
-
-        # Phase 3: keep the cooler engaged with an active notify session
-        # until Bleak attaches; it ends when this D-Bus connection closes.
-        engage_deadline = asyncio.get_event_loop().time() + 10.0
-        notify_path: str | None = None
-        while notify_path is None:
-            notify_path = await _find_notify_char(bus, device_path)
-            if notify_path is not None:
-                break
-            if connect_task.done():
-                _connect_reply_check()
-                notify_path = await _find_notify_char(bus, device_path)
-                break
-            if asyncio.get_event_loop().time() > engage_deadline:
-                break
-            await asyncio.sleep(0.2)
-        if notify_path is not None:
-            with suppress(Exception):
-                await bus.call(
-                    Message(
-                        destination=BLUEZ_SERVICE,
-                        path=notify_path,
-                        interface="org.bluez.GattCharacteristic1",
-                        member="StartNotify",
-                    )
-                )
-                _LOGGER.debug(
-                    "CFX %s notify session active on %s", address, notify_path
-                )
-
-        # Phase 4: the Connect result remains the ground truth.
-        if not connect_task.done():
-            async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
-                await asyncio.shield(connect_task)
-        _connect_reply_check()
-        _LOGGER.info(
-            "CFX %s connected with an encrypted link and active notifications",
-            address,
-        )
-    except TimeoutError as err:
-        raise BleakError(
-            f"Forcing CFX link encryption timed out for {address}"
-        ) from err
-    finally:
-        if not connect_task.done():
-            connect_task.cancel()
-            with suppress(Exception):
-                await connect_task
+            return
+        await asyncio.sleep(0.25)
+    _LOGGER.debug(
+        "CFX %s connected but services not resolved yet; letting Bleak proceed",
+        address,
+    )
 
 async def _pair_bonded_cfx_before_bleak(
     bus: MessageBus, address: str, device_path: str
