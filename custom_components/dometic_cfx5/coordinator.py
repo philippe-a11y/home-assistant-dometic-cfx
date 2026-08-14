@@ -265,9 +265,9 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
                     DEFAULT_NAME,
                     disconnected_callback=self._disconnected_callback,
                     max_attempts=6,
-                    use_services_cache=True,
+                    use_services_cache=False,
                     pair=not paired_locally,
-                    cfx_use_bluez_cache=paired_locally,
+                    cfx_use_bluez_cache=False,
                 )
                 self._select_protocol(client)
                 self._client = client
