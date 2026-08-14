@@ -9,6 +9,8 @@ from typing import Any
 
 from bleak.backends.bluezdbus.utils import get_dbus_authenticator
 from bleak.exc import BleakError
+
+from .const import DDM1_NOTIFY_UUID, DDM2_NOTIFY_UUID
 from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType, MessageType
 from dbus_fast.errors import DBusError
@@ -232,6 +234,95 @@ async def _disconnect_stale_link(
         ) from err
 
 
+async def _force_encrypted_link(
+    bus: MessageBus, address: str, device_path: str
+) -> None:
+    """Connect and actively establish link encryption with the stored keys.
+
+    The CFX never sends a Security Request and silently drops centrals that
+    stay unencrypted for more than a few seconds, and BlueZ as a central does
+    not start encryption on its own after Connect. Subscribing to the DDM
+    notify characteristic forces a CCCD write whose security error makes the
+    kernel encrypt the link with the stored long-term key - the BlueZ
+    equivalent of ESPHome's esp_ble_set_encryption() right after connect.
+    """
+
+    _LOGGER.debug("Connecting CFX %s to force link encryption", address)
+    try:
+        async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
+            reply = await bus.call(
+                Message(
+                    destination=BLUEZ_SERVICE,
+                    path=device_path,
+                    interface=DEVICE_INTERFACE,
+                    member="Connect",
+                )
+            )
+    except TimeoutError as err:
+        raise BleakError(
+            f"Bonded CFX connect timed out for {address}"
+        ) from err
+    if reply.message_type == MessageType.ERROR and reply.error_name not in (
+        "org.bluez.Error.AlreadyConnected",
+    ):
+        raise _reply_error(reply, "Bonded CFX connect failed")
+
+    # Locate the DDM notify characteristic below this device.
+    notify_path: str | None = None
+    objects = await _managed_objects(bus)
+    for path, interfaces in objects.items():
+        if not path.startswith(device_path):
+            continue
+        char = interfaces.get("org.bluez.GattCharacteristic1")
+        if char is None:
+            continue
+        uuid = char.get("UUID")
+        if uuid is not None and str(uuid.value).lower() in (
+            DDM1_NOTIFY_UUID,
+            DDM2_NOTIFY_UUID,
+        ):
+            notify_path = path
+            break
+    if notify_path is None:
+        _LOGGER.debug(
+            "CFX %s GATT objects not exported yet; leaving encryption to the "
+            "first notification subscription",
+            address,
+        )
+        return
+
+    _LOGGER.debug("Forcing CFX link encryption via StartNotify on %s", notify_path)
+    try:
+        async with asyncio.timeout(15.0):
+            reply = await bus.call(
+                Message(
+                    destination=BLUEZ_SERVICE,
+                    path=notify_path,
+                    interface="org.bluez.GattCharacteristic1",
+                    member="StartNotify",
+                )
+            )
+    except TimeoutError as err:
+        raise BleakError(
+            f"Forcing CFX link encryption timed out for {address}"
+        ) from err
+    if reply.message_type == MessageType.ERROR and reply.error_name not in (
+        "org.bluez.Error.InProgress",
+        "org.bluez.Error.AlreadyConnected",
+    ):
+        raise _reply_error(reply, "Forcing CFX link encryption failed")
+    with suppress(Exception):
+        await bus.call(
+            Message(
+                destination=BLUEZ_SERVICE,
+                path=notify_path,
+                interface="org.bluez.GattCharacteristic1",
+                member="StopNotify",
+            )
+        )
+    _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
+
+
 async def _pair_bonded_cfx_before_bleak(
     bus: MessageBus, address: str, device_path: str
 ) -> None:
@@ -241,6 +332,9 @@ async def _pair_bonded_cfx_before_bleak(
     services, which prevents the app-style Pair call after the physical link.
     Device1.Pair itself performs connect, authentication, and primary-service
     discovery, so it is the only supported ordering equivalent on BlueZ.
+    For a device BlueZ already considers paired, Pair returns AlreadyExists
+    without touching the link at all, so encryption must then be established
+    explicitly by _force_encrypted_link.
     """
 
     _LOGGER.debug("Starting bonded CFX security/GATT preflight for %s", address)
@@ -264,9 +358,10 @@ async def _pair_bonded_cfx_before_bleak(
         return
     if reply.error_name == "org.bluez.Error.AlreadyExists":
         _LOGGER.debug(
-            "BlueZ reports the CFX bond already exists; continuing with its "
-            "stored keys"
+            "BlueZ reports the CFX bond already exists; establishing an "
+            "encrypted link with its stored keys"
         )
+        await _force_encrypted_link(bus, address, device_path)
         return
     raise _reply_error(reply, "Bonded CFX security/GATT preflight failed")
 
