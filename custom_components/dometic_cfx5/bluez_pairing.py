@@ -284,15 +284,58 @@ async def _force_encrypted_link(
             )
         )
     )
+
+    async def _device_props(bus_: MessageBus, path_: str) -> dict[str, Any]:
+        reply_ = await bus_.call(
+            Message(
+                destination=BLUEZ_SERVICE,
+                path=path_,
+                interface="org.freedesktop.DBus.Properties",
+                member="GetAll",
+                signature="s",
+                body=[DEVICE_INTERFACE],
+            )
+        )
+        if reply_.message_type == MessageType.ERROR:
+            return {}
+        return reply_.body[0]
+
+    last_diag = ""
     try:
         notify_path: str | None = None
         deadline = asyncio.get_event_loop().time() + 12.0
         while notify_path is None:
+            # Diagnostic snapshot of the link state while we race.
+            props = await _device_props(bus, device_path)
+            objects = await _managed_objects(bus)
+            char_count = sum(
+                1
+                for path, ifaces in objects.items()
+                if path.startswith(device_path)
+                and "org.bluez.GattCharacteristic1" in ifaces
+            )
+            diag = (
+                f"Connected={props.get('Connected') and props['Connected'].value}, "
+                f"ServicesResolved="
+                f"{props.get('ServicesResolved') and props['ServicesResolved'].value}, "
+                f"gatt_chars={char_count}"
+            )
+            if diag != last_diag:
+                _LOGGER.debug("CFX %s link state: %s", address, diag)
+                last_diag = diag
             if connect_task.done():
                 reply = connect_task.result()
                 if reply.message_type == MessageType.ERROR and reply.error_name not in (
                     "org.bluez.Error.AlreadyConnected",
                 ):
+                    _LOGGER.warning(
+                        "CFX %s Connect failed during encryption preflight: "
+                        "%s %s (last link state: %s)",
+                        address,
+                        reply.error_name,
+                        reply.body,
+                        last_diag,
+                    )
                     raise _reply_error(reply, "Bonded CFX connect failed")
                 # Connect finished (services resolved) - look one last time.
                 notify_path = await _find_notify_char(bus, device_path)
