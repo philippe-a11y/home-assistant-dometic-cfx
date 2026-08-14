@@ -47,6 +47,122 @@ _AUTH_FAILURE_MARKERS = (
 )
 
 
+# --- Kernel mgmt socket: central-initiated link encryption ------------------
+#
+# The HCI snoop of the Mobile Cooling app shows that on bonded reconnects the
+# central proactively issues LE Start Encryption ~270ms after the connection
+# comes up; the CFX neither sends a Security Request nor returns ATT security
+# errors, so neither BlueZ nor the kernel would ever encrypt on their own.
+# The mgmt Pair Device command on an already-bonded, connected device does not
+# re-pair: the kernel elevates the connection security, which triggers
+# LE Start Encryption with the stored long-term key - the Linux equivalent of
+# ESPHome's esp_ble_set_encryption().
+
+_AF_BLUETOOTH = 31
+_BTPROTO_HCI = 1
+_HCI_DEV_NONE = 0xFFFF
+_HCI_CHANNEL_CONTROL = 3
+_MGMT_OP_PAIR_DEVICE = 0x0019
+_MGMT_OP_CANCEL_PAIR_DEVICE = 0x001A
+_MGMT_EV_CMD_COMPLETE = 0x0001
+_MGMT_EV_CMD_STATUS = 0x0002
+
+
+def _mgmt_pair_device_blocking(
+    adapter_index: int, address: str, addr_type: int, timeout: float
+) -> int:
+    """Elevate link security via the kernel mgmt interface (blocking).
+
+    Returns the mgmt status code (0 = success). Raises OSError when the
+    mgmt socket is unavailable.
+    """
+
+    import ctypes
+    import select
+    import socket as pysocket
+    import struct as pystruct
+    import time
+
+    sock = pysocket.socket(
+        _AF_BLUETOOTH, pysocket.SOCK_RAW | pysocket.SOCK_CLOEXEC, _BTPROTO_HCI
+    )
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        sockaddr = pystruct.pack(
+            "<HHH", _AF_BLUETOOTH, _HCI_DEV_NONE, _HCI_CHANNEL_CONTROL
+        )
+        buf = ctypes.create_string_buffer(sockaddr)
+        if libc.bind(sock.fileno(), buf, len(sockaddr)) != 0:
+            errno_ = ctypes.get_errno()
+            raise OSError(errno_, "mgmt bind failed")
+
+        bdaddr = bytes(reversed(bytes.fromhex(address.replace(":", ""))))
+        params = bdaddr + bytes((addr_type, 0x03))  # io cap NoInputNoOutput
+        cmd = (
+            pystruct.pack("<HHH", _MGMT_OP_PAIR_DEVICE, adapter_index, len(params))
+            + params
+        )
+        sock.send(cmd)
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                cancel = (
+                    pystruct.pack(
+                        "<HHH", _MGMT_OP_CANCEL_PAIR_DEVICE, adapter_index, 7
+                    )
+                    + bdaddr
+                    + bytes((addr_type,))
+                )
+                sock.send(cancel)
+                raise TimeoutError("mgmt Pair Device timed out")
+            readable, _, _ = select.select([sock], [], [], remaining)
+            if not readable:
+                continue
+            event = sock.recv(512)
+            if len(event) < 6:
+                continue
+            ev_code, ev_index, ev_len = pystruct.unpack("<HHH", event[:6])
+            payload = event[6 : 6 + ev_len]
+            if ev_index != adapter_index or len(payload) < 3:
+                continue
+            (ev_opcode,) = pystruct.unpack("<H", payload[:2])
+            if ev_opcode != _MGMT_OP_PAIR_DEVICE:
+                continue
+            if ev_code == _MGMT_EV_CMD_STATUS:
+                return payload[2]
+            if ev_code == _MGMT_EV_CMD_COMPLETE:
+                return payload[2]
+    finally:
+        sock.close()
+
+
+async def _mgmt_force_encryption(
+    device_path: str, address: str, address_type: str
+) -> None:
+    """Trigger LE Start Encryption with the stored keys via mgmt."""
+
+    try:
+        adapter_index = int(device_path.split("/hci", 1)[1].split("/", 1)[0])
+    except (IndexError, ValueError):
+        adapter_index = 0
+    addr_type = 2 if address_type == "random" else 1
+    status = await asyncio.to_thread(
+        _mgmt_pair_device_blocking, adapter_index, address, addr_type, 10.0
+    )
+    if status != 0:
+        raise BleakError(
+            f"CFX {address} link encryption via mgmt failed with status "
+            f"{status:#04x}"
+            + (
+                " (authentication failed - the cooler rejected the stored key)"
+                if status in (0x05, 0x0E)
+                else ""
+            )
+        )
+
+
 def is_cfx_bond_mismatch_error(err: BaseException) -> bool:
     """Return whether an error indicates a stale bond the CFX has forgotten.
 
@@ -260,17 +376,11 @@ async def _force_encrypted_link(
 ) -> None:
     """Connect and actively establish link encryption with the stored keys.
 
-    The CFX never sends a Security Request, stalls GATT service discovery
-    while the link is unencrypted, and terminates the connection after only
-    a few seconds. BlueZ's Connect call in turn waits for service discovery,
-    so awaiting it first loses the race every time. Instead the Connect call
-    runs in the background while we poll for the DDM notify characteristic -
-    BlueZ exports cached GATT objects for bonded devices immediately on
-    connect - and subscribe to it as soon as it appears. The CCCD write's
-    security error makes the kernel encrypt the link with the stored
-    long-term key within the cooler's patience window, discovery completes,
-    and Connect returns. This is the BlueZ equivalent of ESPHome's
-    esp_ble_set_encryption() right after connect.
+    Mirrors the Mobile Cooling app's bonded reconnect exactly as captured in
+    its HCI snoop: connect, then the central proactively starts link-layer
+    encryption. The CFX neither sends a Security Request nor returns ATT
+    security errors, so the encryption must be initiated explicitly through
+    the kernel mgmt interface; no GATT-based trigger can work.
     """
 
     _LOGGER.debug("Connecting CFX %s to force link encryption", address)
@@ -300,131 +410,85 @@ async def _force_encrypted_link(
             return {}
         return reply_.body[0]
 
-    last_diag = ""
-    saw_connected = False
-    try:
-        notify_path: str | None = None
-        deadline = asyncio.get_event_loop().time() + 12.0
-        while notify_path is None:
-            # Diagnostic snapshot of the link state while we race.
-            props = await _device_props(bus, device_path)
-            objects = await _managed_objects(bus)
-            char_count = sum(
-                1
-                for path, ifaces in objects.items()
-                if path.startswith(device_path)
-                and "org.bluez.GattCharacteristic1" in ifaces
-            )
-            diag = (
-                f"Connected={props.get('Connected') and props['Connected'].value}, "
-                f"ServicesResolved="
-                f"{props.get('ServicesResolved') and props['ServicesResolved'].value}, "
-                f"gatt_chars={char_count}"
-            )
-            if diag != last_diag:
-                _LOGGER.debug("CFX %s link state: %s", address, diag)
-                last_diag = diag
-            if props.get("Connected") and props["Connected"].value:
-                saw_connected = True
-            if connect_task.done():
-                reply = connect_task.result()
-                if reply.message_type == MessageType.ERROR and reply.error_name not in (
-                    "org.bluez.Error.AlreadyConnected",
-                ):
-                    _LOGGER.warning(
-                        "CFX %s Connect failed during encryption preflight: "
-                        "%s %s (last link state: %s)",
-                        address,
-                        reply.error_name,
-                        reply.body,
-                        last_diag,
-                    )
-                    body_text = " ".join(str(part) for part in reply.body).lower()
-                    if saw_connected and "abort" in body_text:
-                        # Either a transient radio glitch or a cooler that
-                        # lost our long-term key. Never remove the bond
-                        # automatically on this ambiguous signal - a
-                        # transient failure would turn permanent. Retry;
-                        # if it persists the user presses the re-pair
-                        # button.
-                        _LOGGER.warning(
-                            "CFX %s dropped the link during encryption. If "
-                            "this repeats on every attempt, press the "
-                            "re-pair button and put the cooler into "
-                            "Bluetooth pairing mode",
-                            address,
-                        )
-                    raise _reply_error(reply, "Bonded CFX connect failed")
-                # Connect finished (services resolved) - look one last time.
-                notify_path = await _find_notify_char(bus, device_path)
-                if notify_path is None:
-                    _LOGGER.debug(
-                        "CFX %s connected but exports no DDM characteristic; "
-                        "leaving encryption to the first subscription",
-                        address,
-                    )
-                    return
-                break
-            notify_path = await _find_notify_char(bus, device_path)
-            if notify_path is not None:
-                break
-            if asyncio.get_event_loop().time() > deadline:
-                raise BleakError(
-                    f"Bonded CFX connect timed out for {address}"
-                )
-            await asyncio.sleep(0.15)
-
-        _LOGGER.debug(
-            "Requesting CFX notifications on %s (queued if not yet connected, "
-            "the CCCD write during connect triggers link encryption)",
-            notify_path,
-        )
-        async with asyncio.timeout(15.0):
-            reply = await bus.call(
-                Message(
-                    destination=BLUEZ_SERVICE,
-                    path=notify_path,
-                    interface="org.bluez.GattCharacteristic1",
-                    member="StartNotify",
-                )
-            )
-        if reply.message_type == MessageType.ERROR and reply.error_name not in (
-            "org.bluez.Error.InProgress",
-            "org.bluez.Error.AlreadyConnected",
-        ):
-            raise _reply_error(reply, "Forcing CFX link encryption failed")
-        # Deliberately do NOT StopNotify: the active notify session keeps the
-        # cooler engaged until Bleak attaches and opens its own session; ours
-        # ends automatically when this context's D-Bus connection closes.
-
-        # The Connect result is the ground truth for whether the encrypted
-        # link actually came up - StartNotify alone may merely have queued
-        # the subscription while still disconnected.
-        if not connect_task.done():
-            async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
-                await asyncio.shield(connect_task)
+    def _connect_reply_check() -> None:
         reply = connect_task.result()
         if reply.message_type == MessageType.ERROR and reply.error_name not in (
             "org.bluez.Error.AlreadyConnected",
         ):
             _LOGGER.warning(
-                "CFX %s Connect failed after requesting notifications: %s %s",
+                "CFX %s Connect failed during encryption preflight: %s %s",
                 address,
                 reply.error_name,
                 reply.body,
             )
-            body_text = " ".join(str(part) for part in reply.body).lower()
-            if "abort" in body_text:
-                _LOGGER.warning(
-                    "CFX %s dropped the link during encryption. If this "
-                    "repeats on every attempt, press the re-pair button "
-                    "and put the cooler into Bluetooth pairing mode",
-                    address,
-                )
             raise _reply_error(reply, "Bonded CFX connect failed")
+
+    try:
+        # Phase 1: wait for the physical link.
+        address_type = "public"
+        deadline = asyncio.get_event_loop().time() + 15.0
+        while True:
+            props = await _device_props(bus, device_path)
+            at = props.get("AddressType")
+            if at is not None:
+                address_type = str(at.value)
+            if props.get("Connected") and props["Connected"].value:
+                break
+            if connect_task.done():
+                _connect_reply_check()
+                break
+            if asyncio.get_event_loop().time() > deadline:
+                raise BleakError(
+                    f"Bonded CFX connect timed out for {address}"
+                )
+            await asyncio.sleep(0.1)
+
+        # Phase 2: proactively encrypt, like the app does ~270ms after
+        # connect. The stored long-term key lives in the kernel.
+        _LOGGER.debug(
+            "Starting LE link encryption for CFX %s via mgmt (%s address)",
+            address,
+            address_type,
+        )
+        await _mgmt_force_encryption(device_path, address, address_type)
+        _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
+
+        # Phase 3: keep the cooler engaged with an active notify session
+        # until Bleak attaches; it ends when this D-Bus connection closes.
+        engage_deadline = asyncio.get_event_loop().time() + 10.0
+        notify_path: str | None = None
+        while notify_path is None:
+            notify_path = await _find_notify_char(bus, device_path)
+            if notify_path is not None:
+                break
+            if connect_task.done():
+                _connect_reply_check()
+                notify_path = await _find_notify_char(bus, device_path)
+                break
+            if asyncio.get_event_loop().time() > engage_deadline:
+                break
+            await asyncio.sleep(0.2)
+        if notify_path is not None:
+            with suppress(Exception):
+                await bus.call(
+                    Message(
+                        destination=BLUEZ_SERVICE,
+                        path=notify_path,
+                        interface="org.bluez.GattCharacteristic1",
+                        member="StartNotify",
+                    )
+                )
+                _LOGGER.debug(
+                    "CFX %s notify session active on %s", address, notify_path
+                )
+
+        # Phase 4: the Connect result remains the ground truth.
+        if not connect_task.done():
+            async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
+                await asyncio.shield(connect_task)
+        _connect_reply_check()
         _LOGGER.info(
-            "CFX %s connected with an encrypted link and active "
-            "notifications",
+            "CFX %s connected with an encrypted link and active notifications",
             address,
         )
     except TimeoutError as err:
@@ -436,7 +500,6 @@ async def _force_encrypted_link(
             connect_task.cancel()
             with suppress(Exception):
                 await connect_task
-
 
 async def _pair_bonded_cfx_before_bleak(
     bus: MessageBus, address: str, device_path: str
