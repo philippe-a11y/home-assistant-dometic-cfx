@@ -51,7 +51,7 @@ class ProtocolTest(unittest.TestCase):
             )
         )
         self.assertEqual(state.family, protocol.DeviceFamily.CFX2)
-        self.assertEqual(len(protocol.SUBSCRIPTIONS), 15)
+        self.assertEqual(len(protocol.SUBSCRIPTIONS), 16)
 
     def test_compartment_arrays(self) -> None:
         state = protocol.CFX5State()
