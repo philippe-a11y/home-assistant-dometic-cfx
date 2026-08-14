@@ -372,7 +372,9 @@ async def _force_encrypted_link(
             await asyncio.sleep(0.15)
 
         _LOGGER.debug(
-            "Forcing CFX link encryption via StartNotify on %s", notify_path
+            "Requesting CFX notifications on %s (queued if not yet connected, "
+            "the CCCD write during connect triggers link encryption)",
+            notify_path,
         )
         async with asyncio.timeout(15.0):
             reply = await bus.call(
@@ -388,18 +390,41 @@ async def _force_encrypted_link(
             "org.bluez.Error.AlreadyConnected",
         ):
             raise _reply_error(reply, "Forcing CFX link encryption failed")
-        # Deliberately do NOT StopNotify here: the active notify session is
-        # what keeps the cooler engaged. Without a subscriber it drops the
-        # idle link within seconds, and Bleak would then reconnect
-        # unencrypted and stall. Our session ends automatically when this
-        # context's D-Bus connection closes, after Bleak has attached and
-        # opened its own notify session.
-        _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
-        # Let the background Connect finish service discovery cleanly.
+        # Deliberately do NOT StopNotify: the active notify session keeps the
+        # cooler engaged until Bleak attaches and opens its own session; ours
+        # ends automatically when this context's D-Bus connection closes.
+
+        # The Connect result is the ground truth for whether the encrypted
+        # link actually came up - StartNotify alone may merely have queued
+        # the subscription while still disconnected.
         if not connect_task.done():
-            with suppress(TimeoutError):
-                async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
-                    await asyncio.shield(connect_task)
+            async with asyncio.timeout(BONDED_PREFLIGHT_TIMEOUT_SECONDS):
+                await asyncio.shield(connect_task)
+        reply = connect_task.result()
+        if reply.message_type == MessageType.ERROR and reply.error_name not in (
+            "org.bluez.Error.AlreadyConnected",
+        ):
+            _LOGGER.warning(
+                "CFX %s Connect failed after requesting notifications: %s %s",
+                address,
+                reply.error_name,
+                reply.body,
+            )
+            body_text = " ".join(str(part) for part in reply.body).lower()
+            if "abort" in body_text:
+                # An abort at this stage means the link came up and died
+                # during encryption, even if the brief connection fell
+                # between two of our polls.
+                raise BleakError(
+                    f"CFX {address} stored-key encryption rejected: "
+                    "the cooler dropped the link right after connect"
+                )
+            raise _reply_error(reply, "Bonded CFX connect failed")
+        _LOGGER.info(
+            "CFX %s connected with an encrypted link and active "
+            "notifications",
+            address,
+        )
     except TimeoutError as err:
         raise BleakError(
             f"Forcing CFX link encryption timed out for {address}"
