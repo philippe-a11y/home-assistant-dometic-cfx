@@ -388,15 +388,12 @@ async def _force_encrypted_link(
             "org.bluez.Error.AlreadyConnected",
         ):
             raise _reply_error(reply, "Forcing CFX link encryption failed")
-        with suppress(Exception):
-            await bus.call(
-                Message(
-                    destination=BLUEZ_SERVICE,
-                    path=notify_path,
-                    interface="org.bluez.GattCharacteristic1",
-                    member="StopNotify",
-                )
-            )
+        # Deliberately do NOT StopNotify here: the active notify session is
+        # what keeps the cooler engaged. Without a subscriber it drops the
+        # idle link within seconds, and Bleak would then reconnect
+        # unencrypted and stall. Our session ends automatically when this
+        # context's D-Bus connection closes, after Bleak has attached and
+        # opened its own notify session.
         _LOGGER.info("CFX %s link is encrypted with the stored keys", address)
         # Let the background Connect finish service discovery cleanly.
         if not connect_task.done():
