@@ -638,8 +638,20 @@ async def async_prepare_cfx_bluez(address: str) -> AsyncIterator[bool]:
                 _LOGGER.info("Existing CFX bond for %s marked trusted", address)
             else:
                 _LOGGER.debug("CFX %s is already bonded and trusted", address)
-            await _disconnect_stale_link(bus, address, device_path, properties)
-            await _pair_bonded_cfx_before_bleak(bus, address, device_path)
+            # Do NOT run a custom connect/encryption preflight here. Bleak's
+            # own connect() already does the right thing for a bonded device:
+            # it calls Connect (BlueZ then encrypts with the stored key
+            # automatically) and, crucially, handles the expected
+            # le-connection-abort-by-local by waiting for the disconnect
+            # signal and retrying in a loop on the same D-Bus connection. A
+            # separate preflight on its own D-Bus connection only races and
+            # sabotages that recovery, which is why bonded reconnects failed.
+            _LOGGER.debug(
+                "CFX %s is bonded; letting bleak establish the encrypted link",
+                address,
+            )
+            yield True
+            return
         else:
             _LOGGER.debug(
                 "Starting application-owned CFX Just Works pairing for %s", address

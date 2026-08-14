@@ -264,7 +264,7 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
                     ble_device,
                     DEFAULT_NAME,
                     disconnected_callback=self._disconnected_callback,
-                    max_attempts=2,
+                    max_attempts=6,
                     use_services_cache=True,
                     pair=not paired_locally,
                     cfx_use_bluez_cache=paired_locally,
@@ -300,53 +300,35 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             if detected is not DeviceFamily.UNKNOWN:
                 self.data.family = detected
             client: BleakClientWithServiceCache | None = None
-            # The CFX is a flaky peer: the Mobile Cooling app itself retries
-            # the LE connection many times before one survives long enough to
-            # encrypt. Mirror that within a single update cycle instead of
-            # waiting a full interval between attempts.
-            attempts = 6
-            last_err: BaseException | None = None
-            for attempt in range(1, attempts + 1):
-                try:
-                    client = await self._async_initialize_connection(ble_device)
-                    last_err = None
-                    break
-                except (BleakError, HomeAssistantError, TimeoutError) as err:
-                    await self._async_disconnect_failed_client(client)
-                    client = None
-                    last_err = err
-                    if is_cfx_bond_mismatch_error(err):
-                        _LOGGER.warning(
-                            "CFX %s rejected the stored bond (%s); removing "
-                            "the local bond and pairing again",
-                            self.address,
-                            err,
-                        )
-                        await async_remove_cfx_bluez_bond(self.address)
-                        try:
-                            client = await self._async_initialize_connection(
-                                ble_device
-                            )
-                            last_err = None
-                        except (
-                            BleakError,
-                            HomeAssistantError,
-                            TimeoutError,
-                        ) as retry_err:
-                            await self._async_disconnect_failed_client(client)
-                            client = None
-                            last_err = retry_err
-                        break
-                    _LOGGER.debug(
-                        "CFX %s connect attempt %d/%d failed transiently: %s",
+            try:
+                client = await self._async_initialize_connection(ble_device)
+            except (BleakError, HomeAssistantError, TimeoutError) as err:
+                await self._async_disconnect_failed_client(client)
+                client = None
+                if is_cfx_bond_mismatch_error(err):
+                    # The cooler no longer holds our key (e.g. factory reset).
+                    # Remove the stale local bond once and retry with fresh
+                    # Just Works pairing.
+                    _LOGGER.warning(
+                        "CFX %s rejected the stored bond (%s); removing the "
+                        "local bond and pairing again",
                         self.address,
-                        attempt,
-                        attempts,
                         err,
                     )
-                    await asyncio.sleep(0.5)
-            if last_err is not None:
-                self._raise_update_failed(last_err)
+                    await async_remove_cfx_bluez_bond(self.address)
+                    try:
+                        client = await self._async_initialize_connection(
+                            ble_device
+                        )
+                    except (
+                        BleakError,
+                        HomeAssistantError,
+                        TimeoutError,
+                    ) as retry_err:
+                        await self._async_disconnect_failed_client(client)
+                        self._raise_update_failed(retry_err)
+                else:
+                    self._raise_update_failed(err)
 
             self.connected = True
             _LOGGER.info(
