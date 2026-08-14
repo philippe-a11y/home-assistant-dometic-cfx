@@ -349,9 +349,18 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
 
         User-initiated recovery for a cooler that was factory reset or whose
         bond is otherwise unusable. The next refresh performs fresh Just
-        Works pairing.
+        Works pairing. Ignored while the connection is healthy: destroying
+        a working bond has no legitimate use and pressing the button after
+        a successful recovery would immediately break it again.
         """
 
+        if self.connected:
+            _LOGGER.warning(
+                "CFX %s re-pair ignored: the connection is healthy. Use the "
+                "button only when the cooler cannot be reached",
+                self.address,
+            )
+            return
         async with self._connect_lock:
             client = self._client
             self._client = None
