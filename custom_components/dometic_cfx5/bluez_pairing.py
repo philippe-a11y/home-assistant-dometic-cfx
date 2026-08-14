@@ -44,6 +44,9 @@ _AUTH_FAILURE_MARKERS = (
     "authentication failed",
     "insufficient authentication",
     "insufficient encryption",
+    # Raised by _force_encrypted_link when the link drops right after
+    # connecting: the cooler no longer holds our long-term key.
+    "stored-key encryption rejected",
 )
 
 
@@ -301,6 +304,7 @@ async def _force_encrypted_link(
         return reply_.body[0]
 
     last_diag = ""
+    saw_connected = False
     try:
         notify_path: str | None = None
         deadline = asyncio.get_event_loop().time() + 12.0
@@ -323,6 +327,8 @@ async def _force_encrypted_link(
             if diag != last_diag:
                 _LOGGER.debug("CFX %s link state: %s", address, diag)
                 last_diag = diag
+            if props.get("Connected") and props["Connected"].value:
+                saw_connected = True
             if connect_task.done():
                 reply = connect_task.result()
                 if reply.message_type == MessageType.ERROR and reply.error_name not in (
@@ -336,6 +342,15 @@ async def _force_encrypted_link(
                         reply.body,
                         last_diag,
                     )
+                    body_text = " ".join(str(part) for part in reply.body).lower()
+                    if saw_connected and "abort" in body_text:
+                        # The physical link came up and immediately died on
+                        # our side: the kernel could not encrypt with the
+                        # stored long-term key, meaning the cooler lost it.
+                        raise BleakError(
+                            f"CFX {address} stored-key encryption rejected: "
+                            "the cooler dropped the link right after connect"
+                        )
                     raise _reply_error(reply, "Bonded CFX connect failed")
                 # Connect finished (services resolved) - look one last time.
                 notify_path = await _find_notify_char(bus, device_path)
