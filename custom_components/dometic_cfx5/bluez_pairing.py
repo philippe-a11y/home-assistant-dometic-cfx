@@ -44,9 +44,6 @@ _AUTH_FAILURE_MARKERS = (
     "authentication failed",
     "insufficient authentication",
     "insufficient encryption",
-    # Raised by _force_encrypted_link when the link drops right after
-    # connecting: the cooler no longer holds our long-term key.
-    "stored-key encryption rejected",
 )
 
 
@@ -344,12 +341,18 @@ async def _force_encrypted_link(
                     )
                     body_text = " ".join(str(part) for part in reply.body).lower()
                     if saw_connected and "abort" in body_text:
-                        # The physical link came up and immediately died on
-                        # our side: the kernel could not encrypt with the
-                        # stored long-term key, meaning the cooler lost it.
-                        raise BleakError(
-                            f"CFX {address} stored-key encryption rejected: "
-                            "the cooler dropped the link right after connect"
+                        # Either a transient radio glitch or a cooler that
+                        # lost our long-term key. Never remove the bond
+                        # automatically on this ambiguous signal - a
+                        # transient failure would turn permanent. Retry;
+                        # if it persists the user presses the re-pair
+                        # button.
+                        _LOGGER.warning(
+                            "CFX %s dropped the link during encryption. If "
+                            "this repeats on every attempt, press the "
+                            "re-pair button and put the cooler into "
+                            "Bluetooth pairing mode",
+                            address,
                         )
                     raise _reply_error(reply, "Bonded CFX connect failed")
                 # Connect finished (services resolved) - look one last time.
@@ -412,12 +415,11 @@ async def _force_encrypted_link(
             )
             body_text = " ".join(str(part) for part in reply.body).lower()
             if "abort" in body_text:
-                # An abort at this stage means the link came up and died
-                # during encryption, even if the brief connection fell
-                # between two of our polls.
-                raise BleakError(
-                    f"CFX {address} stored-key encryption rejected: "
-                    "the cooler dropped the link right after connect"
+                _LOGGER.warning(
+                    "CFX %s dropped the link during encryption. If this "
+                    "repeats on every attempt, press the re-pair button "
+                    "and put the cooler into Bluetooth pairing mode",
+                    address,
                 )
             raise _reply_error(reply, "Bonded CFX connect failed")
         _LOGGER.info(
@@ -544,6 +546,15 @@ async def async_prepare_cfx_bluez(address: str) -> AsyncIterator[bool]:
     try:
         await bus.connect()
         found = _find_device(await _managed_objects(bus), address)
+        if found is None:
+            # Right after a Home Assistant restart the local adapter often
+            # has not seen the cooler's advertisement yet, so a missing
+            # device object does not mean a proxy is responsible. Give
+            # local discovery a moment before delegating.
+            deadline = asyncio.get_event_loop().time() + 10.0
+            while found is None and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.5)
+                found = _find_device(await _managed_objects(bus), address)
         if found is None:
             _LOGGER.debug(
                 "CFX %s has no local BlueZ object; delegating pairing", address
