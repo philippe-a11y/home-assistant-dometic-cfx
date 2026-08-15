@@ -70,6 +70,14 @@ from .protocol_ddm1 import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# TEST SWITCH: set to a scanner source MAC (e.g. an ESPHome Bluetooth proxy's
+# MAC, as shown under Settings -> Devices & Services -> Bluetooth) to force all
+# connections through that source only. Empty string = normal automatic source
+# selection (nearest reachable adapter or proxy). This is a temporary switch
+# for verifying whether the proxy path keeps the bonded connection across a
+# restart; a proper per-entry option can replace it once that's confirmed.
+FORCE_PROXY_SOURCE = ""
+
 ProtocolName = Literal["ddm1", "ddm2"]
 
 
@@ -283,6 +291,45 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             self._initializing = False
         return client
 
+    def _resolve_ble_device(self):
+        """Return the BLEDevice to connect through.
+
+        When FORCE_PROXY_SOURCE is set to a scanner's source MAC, only that
+        source (e.g. a specific ESPHome Bluetooth proxy) is used, so a test
+        cannot silently fall back to a local adapter. When it is empty, the
+        normal automatic behaviour is used: the nearest reachable adapter or
+        proxy, exactly as before.
+        """
+        if FORCE_PROXY_SOURCE:
+            paths = bluetooth.async_scanner_devices_by_address(
+                self.hass, self.address, connectable=True
+            )
+            ble_device = next(
+                (
+                    path.ble_device
+                    for path in paths
+                    if path.scanner.source
+                    and path.scanner.source.upper() == FORCE_PROXY_SOURCE.upper()
+                ),
+                None,
+            )
+            if ble_device is None:
+                raise UpdateFailed(
+                    f"CFX {self.address} not reachable via forced Bluetooth "
+                    f"source {FORCE_PROXY_SOURCE}"
+                )
+            _LOGGER.debug(
+                "CFX %s: connecting via forced source %s",
+                self.address,
+                FORCE_PROXY_SOURCE,
+            )
+            return ble_device
+
+        # Default: let HA pick the nearest reachable adapter or proxy.
+        return bluetooth.async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        )
+
     async def _async_connect(self) -> None:
         """Connect, negotiate the protocol and subscribe."""
 
@@ -290,9 +337,7 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             if self._client is not None and self._client.is_connected:
                 return
 
-            ble_device = bluetooth.async_ble_device_from_address(
-                self.hass, self.address, connectable=True
-            )
+            ble_device = self._resolve_ble_device()
             if ble_device is None:
                 raise UpdateFailed(f"CFX {self.address} is not in Bluetooth range")
 
