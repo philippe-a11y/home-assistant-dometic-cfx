@@ -138,12 +138,19 @@ class DometicCFXSensor(DometicCFXEntity, SensorEntity):
 
 
 class DometicCFXTemperatureSensor(DometicCFXEntity, SensorEntity):
-    """Measured temperature for one compartment."""
+    """Measured temperature for one compartment.
+
+    The same temperature is already shown by that compartment's climate
+    entity (current_temperature), so this standalone sensor is disabled by
+    default to avoid duplication. It stays available for users who want a
+    dedicated sensor for history graphs and can enable it in the UI.
+    """
 
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_translation_key = "compartment_temperature"
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: DometicCFXCoordinator, index: int) -> None:
         """Initialize a compartment temperature sensor."""
