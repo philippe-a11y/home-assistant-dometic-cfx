@@ -9,21 +9,28 @@
 
 Native Home Assistant custom integration for the CFX generations supported by Dometic Mobile Cooling 2.0.32: **CFX2, CFX3 and CFX5**. It discovers a nearby cooler automatically, connects locally over Bluetooth, selects DDM1 or DDM2 from the verified GATT service, detects its product type and compartment count, and creates the matching entities without YAML configuration.
 
-> **Status: hardware validation needed.** Both codecs, protocol selection and the Home Assistant structure are tested without hardware. Each generation still needs a physical connection test before this is production-ready.
+> **Status.** CFX5 (`MC1`) is validated on real hardware (a CFX5 25, plus a
+> CFX5 35 via the ESPHome sister project). CFX2 and CFX3 are implemented from
+> the reverse-engineered app but still need a hardware test. The most important
+> practical finding: connect through an **ESPHome Bluetooth proxy**, not a
+> local adapter — see [Bluetooth source](#bluetooth-source) below.
 
 ## Supported families
 
 | Family | App ID | BLE protocol | Status |
 |---|---|---|---|
+| CFX5, all product types (25/35/45/55/55IM/75DZ/95DZ) | `MC1` | DDM2 | Validated on hardware (CFX5 25; 35 via ESPHome fork) |
 | CFX2, including dual-zone models | `MC2` / `MC3` | DDM2 | Implemented, hardware test pending |
-| CFX3, including 55IM/75DZ/95DZ | `CFX3` | DDM1 | Implemented, hardware test pending |
-| CFX5, all product types exposed by the app | `MC1` | DDM2 | Implemented, hardware test pending |
+| CFX3 | `CFX3` | DDM1 | Implemented, hardware test pending |
 
 The integration keeps its original internal domain `dometic_cfx5` so installations of the first CFX5-only preview remain compatible.
 
 ## Why this implementation is different
 
-The earlier ESPHome proof of concept does control a CFX5, but it can make the cooler report a communication fault. Analysis of Mobile Cooling found four important differences:
+This integration was reverse-engineered from Mobile Cooling to match the app's
+behaviour exactly. The earlier ESPHome implementation also controls a CFX5;
+the differences below were derived from the app to avoid a communication fault
+that undisciplined subscriptions could trigger:
 
 | Earlier implementation | Mobile Cooling / this integration |
 |---|---|
@@ -56,6 +63,8 @@ These changes remove the most plausible triggers for the communication fault. Th
 - Detected product model
 - Decoded DDM1 and DDM2 error/alert states and problem sensor
 - Persistent connection with automatic reconnect
+- Selectable Bluetooth source (automatic, a specific ESPHome proxy, or a local
+  adapter), changeable at setup and later in the options
 
 ## Installation
 
@@ -88,9 +97,34 @@ Alternatively, open **HACS → Integrations → ⋮ → Custom repositories**, a
 
 No MAC address, product type or zone count is entered manually.
 
-### Bluetooth adapter or proxy
+## Bluetooth source
 
-The integration needs an adapter that supports active BLE connections. A directly attached Home Assistant Bluetooth adapter is useful for the first test because it removes a proxy as another variable.
+The integration needs a Bluetooth source that supports active connections —
+either a local adapter or an ESPHome Bluetooth proxy. **Which one matters a
+great deal for the CFX.**
+
+With a **local adapter (BlueZ)**, the encrypted bond does not reliably survive
+a Home Assistant restart on some setups: after a reboot the cooler disconnects
+and refuses to reconnect until it is put back into PAIR mode. This was traced
+to a BlueZ/kernel-level behaviour (the link key is lost across the restart),
+not to this integration.
+
+With an **ESPHome Bluetooth proxy**, the bonded connection is kept across a
+Home Assistant restart and reconnects on its own, with no pairing mode. This
+matches Home Assistant's own recommendation to use a proxy for demanding BLE
+devices, and it is the setup validated here.
+
+You can choose the source both when adding the cooler and later under the
+integration's **options**:
+
+- **Automatic** — Home Assistant picks the nearest reachable adapter or proxy.
+- **A specific ESPHome proxy** — recommended; forces the connection through
+  that proxy and keeps the bond across restarts.
+- **A local adapter** — works, but expect to re-pair after every restart.
+
+To run a proxy, flash any ESP32 with ESPHome's `bluetooth_proxy` (`active:
+true`). It can be the same board you might otherwise use for the ESPHome
+variant — you do not need both at once.
 
 ## First hardware test
 
@@ -132,10 +166,12 @@ refusing is:
 3. Press the **Re-pair Bluetooth bond** button (or reload the integration).
    A successful bond logs `bonded successfully with BlueZ` within seconds.
 
-The bond is stored persistently by BlueZ, so Home Assistant restarts and
-host reboots reconnect without pairing mode. Make sure no other central is
-using the cooler: do not run the Dometic app or an ESPHome client at the
-same time, the CFX serves only one connection.
+Note that with a **local BlueZ adapter** the bond is not reliably kept across
+a Home Assistant restart on some setups, so pairing mode may be required again
+after each reboot; an **ESPHome proxy** avoids this (see
+[Bluetooth source](#bluetooth-source)). In all cases, make sure no other
+central is using the cooler: do not run the Dometic app or an ESPHome client at
+the same time, since the CFX serves only one connection.
 
 On bonded reconnects, the integration asks BlueZ to perform its combined
 connect, security, and GATT `Pair` operation before Bleak starts a separate
