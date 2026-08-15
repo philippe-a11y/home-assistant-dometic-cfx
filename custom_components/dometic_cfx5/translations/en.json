@@ -64,6 +64,15 @@
       },
       "power": {
         "name": "Power"
+      },
+      "model_name": {
+        "name": "Model"
+      },
+      "serial_number": {
+        "name": "Serial number"
+      },
+      "sku": {
+        "name": "SKU / article number"
       }
     },
     "switch": {

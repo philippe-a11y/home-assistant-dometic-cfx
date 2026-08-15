@@ -64,6 +64,15 @@
       },
       "power": {
         "name": "Leistung"
+      },
+      "model_name": {
+        "name": "Modell"
+      },
+      "serial_number": {
+        "name": "Seriennummer"
+      },
+      "sku": {
+        "name": "SKU / Artikelnummer"
       }
     },
     "switch": {

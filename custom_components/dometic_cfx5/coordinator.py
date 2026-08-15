@@ -38,6 +38,7 @@ from .const import (
 )
 from .protocol import (
     SUBSCRIPTIONS as DDM2_SUBSCRIPTIONS,
+    IDENTITY_READS as DDM2_IDENTITY_READS,
     TOPIC_BATTERY_PROTECTION as DDM2_TOPIC_BATTERY_PROTECTION,
     TOPIC_COMPARTMENT_POWER as DDM2_TOPIC_COMPARTMENT_POWER,
     TOPIC_COOLER_POWER as DDM2_TOPIC_COOLER_POWER,
@@ -252,6 +253,11 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
 
         if self.protocol == "ddm2":
             for topic in DDM2_SUBSCRIPTIONS:
+                await self._async_write_frame(ddm2_subscribe_frame(topic))
+            # Read identity topics once (serial, SKU, and the 0x1C product
+            # name/CMS SKU). These never change, so a single read is enough and
+            # keeps the persistent subscription set identical to the app.
+            for topic in DDM2_IDENTITY_READS:
                 await self._async_write_frame(ddm2_subscribe_frame(topic))
             return
         raise UpdateFailed("CFX protocol has not been selected")

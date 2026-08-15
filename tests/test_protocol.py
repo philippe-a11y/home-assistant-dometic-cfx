@@ -43,6 +43,35 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(state.compartment_count, 2)
         self.assertEqual(state.model_name, "CFX5 Dual Zone")
 
+    def test_model_name_from_product_info_class(self) -> None:
+        """0x1C product name and CMS SKU drive the exact model name."""
+        state = protocol.CFX5State()
+        state.family = protocol.DeviceFamily.CFX5
+
+        # On-device product name is normalised: "CFX525" -> "CFX5 25".
+        self.assertTrue(
+            protocol.parse_publish(
+                publish(protocol.TOPIC_PRODUCT_NAME, b"CFX525"), state
+            )
+        )
+        self.assertEqual(state.product_name, "CFX525")
+        self.assertEqual(state.model_name, "CFX5 25")
+
+        # A known CMS SKU takes precedence and yields the exact name.
+        self.assertTrue(
+            protocol.parse_publish(
+                publish(protocol.TOPIC_PRODUCT_SKU, b"9620015962"), state
+            )
+        )
+        self.assertEqual(state.cms_sku, "9620015962")
+        self.assertEqual(state.model_name, "CFX5 75DZ")
+
+    def test_identity_reads_are_not_in_subscriptions(self) -> None:
+        """Identity topics are read once, not in the persistent subscriptions."""
+        self.assertEqual(len(protocol.SUBSCRIPTIONS), 16)
+        for topic in protocol.IDENTITY_READS:
+            self.assertNotIn(topic, protocol.SUBSCRIPTIONS)
+
     def test_firmware_id_detects_ddm2_generation(self) -> None:
         state = protocol.CFXState()
         self.assertTrue(

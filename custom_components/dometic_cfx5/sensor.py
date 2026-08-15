@@ -76,7 +76,7 @@ TEXT_SENSORS = (
     TextSensorDescription(
         key="product_type",
         translation_key="product_type",
-        value_fn=lambda state: state.model_name,
+        value_fn=lambda state: state.product_type_name,
     ),
     TextSensorDescription(
         key="power_source",
@@ -87,6 +87,21 @@ TEXT_SENSORS = (
         key="active_errors",
         translation_key="active_errors",
         value_fn=lambda state: state.error_text,
+    ),
+    TextSensorDescription(
+        key="model_name",
+        translation_key="model_name",
+        value_fn=lambda state: state.model_name,
+    ),
+    TextSensorDescription(
+        key="serial_number",
+        translation_key="serial_number",
+        value_fn=lambda state: state.serial_number,
+    ),
+    TextSensorDescription(
+        key="sku",
+        translation_key="sku",
+        value_fn=lambda state: state.sku,
     ),
 )
 

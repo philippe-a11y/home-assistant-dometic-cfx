@@ -50,6 +50,11 @@ TOPIC_SKU = _topic(0x14)
 TOPIC_FIRMWARE_VERSION = _topic(0x15)
 TOPIC_FIRMWARE_ID = bytes((0x07, 0x00, 0x01, 0x00))
 
+# Product-info class 0x1C (distinct from the 0x1A realtime class). Holds the
+# exact marketing product name and CMS SKU on-device, verified on a CFX5 25.
+TOPIC_PRODUCT_NAME = bytes((0x01, 0x00, 0x00, 0x1C))
+TOPIC_PRODUCT_SKU = bytes((0x03, 0x00, 0x00, 0x1C))
+
 # These are the exact CFX2/CFX5 dashboard subscriptions in Mobile Cooling
 # 2.0.32, plus battery protection from its settings screen and cfg.fwid for
 # family detection. Valid but nonessential mccc diagnostics stay in the decoder
@@ -73,6 +78,17 @@ SUBSCRIPTIONS: tuple[bytes, ...] = (
     TOPIC_FIRMWARE_ID,
 )
 
+# Identity topics are read once after connecting (like the app), not
+# subscribed, to keep the subscription set byte-identical to Mobile Cooling.
+# Serial (0x13) and SKU/article (0x14) are in the 0x1A class; the exact
+# product name and CMS SKU are in the 0x1C product-info class.
+IDENTITY_READS: tuple[bytes, ...] = (
+    TOPIC_SERIAL_NUMBER,
+    TOPIC_SKU,
+    TOPIC_PRODUCT_NAME,
+    TOPIC_PRODUCT_SKU,
+)
+
 PRODUCT_TYPE_NAMES = {
     0: "Unconfigured",
     1: "Single Zone",
@@ -80,6 +96,32 @@ PRODUCT_TYPE_NAMES = {
     3: "Dual Zone",
     4: "Deli Box",
 }
+
+# CMS SKU -> exact model name, from Dometic's own product data (firmwareId
+# MC1 = the CFX5 family). Used as the cleanest offline model-name source.
+_MODEL_BY_CMS_SKU = {
+    "9620015957": "CFX5 25",
+    "9620015958": "CFX5 35",
+    "9620015959": "CFX5 45",
+    "9620015960": "CFX5 55",
+    "9620015961": "CFX5 55IM",
+    "9620015962": "CFX5 75DZ",
+    "9620015963": "CFX5 95DZ",
+}
+
+
+def _normalise_product_name(raw: str) -> str:
+    """Turn the on-device product name into readable form.
+
+    "CFX525" -> "CFX5 25", "CFX575DZ" -> "CFX5 75DZ". The name is a family
+    prefix ("CFX" + one series digit) directly followed by the litre number;
+    insert a space between them. Anything not matching is returned unchanged.
+    """
+    if len(raw) < 5 or not raw.startswith("CFX"):
+        return raw
+    if not (raw[3].isdigit() and raw[4].isdigit()):
+        return raw
+    return f"{raw[:4]} {raw[4:]}"
 
 POWER_SOURCE_NAMES = {0: "AC", 1: "DC"}
 BATTERY_PROTECTION_NAMES = {0: "Low", 1: "Medium", 2: "High"}
@@ -157,19 +199,41 @@ class CFXState:
     alerts: tuple[str, ...] = ()
     serial_number: str | None = None
     sku: str | None = None
+    # From the 0x1C product-info class: exact product name and CMS SKU.
+    product_name: str | None = None
+    cms_sku: str | None = None
     firmware_version: str | None = None
 
     @property
     def model_name(self) -> str:
-        """Return a readable detected product type."""
+        """Return the most exact readable model name.
 
-        if self.sku:
-            return self.sku
+        Resolution order, matching the ESPHome component:
+        1. CMS SKU (from 0x1C) mapped to Dometic's exact name via a table.
+        2. On-device product name (from 0x1C), normalised ("CFX525" ->
+           "CFX5 25"). This is what real firmware usually provides.
+        3. Derived from family + product type ("CFX5 Single Zone").
+
+        Note: the 0x14 topic (self.sku) is a serial/article number on at
+        least some boxes, so it is not used as a model name.
+        """
+        from_sku = _MODEL_BY_CMS_SKU.get(self.cms_sku or "")
+        if from_sku:
+            return from_sku
+        if self.product_name:
+            return _normalise_product_name(self.product_name)
         family = self.family.value
         if self.product_type is None:
             return family
         product = PRODUCT_TYPE_NAMES.get(self.product_type, f"type {self.product_type}")
         return f"{family} {product}"
+
+    @property
+    def product_type_name(self) -> str | None:
+        """Return the readable product type (Single Zone, Dual Zone, ...)."""
+        if self.product_type is None:
+            return None
+        return PRODUCT_TYPE_NAMES.get(self.product_type, f"type {self.product_type}")
 
     @property
     def power_source_name(self) -> str | None:
@@ -370,6 +434,10 @@ def parse_publish(  # noqa: C901
         state.serial_number = _decode_string(payload)
     elif topic == TOPIC_SKU:
         state.sku = _decode_string(payload)
+    elif topic == TOPIC_PRODUCT_NAME:
+        state.product_name = _decode_string(payload)
+    elif topic == TOPIC_PRODUCT_SKU:
+        state.cms_sku = _decode_string(payload)
     elif topic == TOPIC_FIRMWARE_VERSION:
         state.firmware_version = _decode_string(payload)
     elif topic == TOPIC_FIRMWARE_ID:
