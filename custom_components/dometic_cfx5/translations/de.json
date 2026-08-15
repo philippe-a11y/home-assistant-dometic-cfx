@@ -73,6 +73,9 @@
       },
       "sku": {
         "name": "SKU / Artikelnummer"
+      },
+      "cms_sku": {
+        "name": "Produktnummer (CMS-SKU)"
       }
     },
     "switch": {

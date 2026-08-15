@@ -103,6 +103,11 @@ TEXT_SENSORS = (
         translation_key="sku",
         value_fn=lambda state: state.sku,
     ),
+    TextSensorDescription(
+        key="cms_sku",
+        translation_key="cms_sku",
+        value_fn=lambda state: state.cms_sku,
+    ),
 )
 
 
