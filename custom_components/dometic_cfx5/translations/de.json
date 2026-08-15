@@ -15,6 +15,12 @@
           "address": "Gerät"
         },
         "description": "Wähle die Dometic-CFX-Kühlbox aus."
+      },
+      "source": {
+        "data": {
+          "source": "Bluetooth-Quelle"
+        },
+        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Ein bestimmter ESPHome-Proxy wird empfohlen, da er die Bluetooth-Bindung über Neustarts hinweg hält."
       }
     }
   },
@@ -71,6 +77,16 @@
     "button": {
       "repair_bond": {
         "name": "Bluetooth neu koppeln"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "source": "Bluetooth-Quelle"
+        },
+        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Ein bestimmter ESPHome-Proxy hält die Bluetooth-Bindung über Neustarts hinweg."
       }
     }
   }

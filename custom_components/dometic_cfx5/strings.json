@@ -15,6 +15,12 @@
           "address": "Device"
         },
         "description": "Select the Dometic CFX cooler to add."
+      },
+      "source": {
+        "data": {
+          "source": "Bluetooth source"
+        },
+        "description": "Choose how Home Assistant connects to the cooler. Automatic uses the nearest reachable adapter or proxy. Choosing a specific ESPHome proxy is recommended, as it keeps the bonded connection across restarts."
       }
     }
   },
@@ -71,6 +77,16 @@
     "button": {
       "repair_bond": {
         "name": "Re-pair Bluetooth bond"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "source": "Bluetooth source"
+        },
+        "description": "Choose how Home Assistant connects to the cooler. Automatic uses the nearest reachable adapter or proxy. A specific ESPHome proxy keeps the bonded connection across restarts."
       }
     }
   }

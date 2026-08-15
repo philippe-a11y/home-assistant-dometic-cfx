@@ -24,6 +24,7 @@ from .bluez_pairing import (
     is_cfx_bond_mismatch_error,
 )
 from .const import (
+    CONF_SOURCE,
     DDM1_NOTIFY_UUID,
     DDM1_SERVICE_UUID,
     DDM1_WRITE_UUID,
@@ -32,6 +33,7 @@ from .const import (
     DDM2_WRITE_UUID,
     DEFAULT_NAME,
     INITIAL_DATA_TIMEOUT_SECONDS,
+    SOURCE_AUTO,
     UPDATE_INTERVAL_SECONDS,
 )
 from .protocol import (
@@ -70,14 +72,6 @@ from .protocol_ddm1 import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# TEST SWITCH: set to a scanner source MAC (e.g. an ESPHome Bluetooth proxy's
-# MAC, as shown under Settings -> Devices & Services -> Bluetooth) to force all
-# connections through that source only. Empty string = normal automatic source
-# selection (nearest reachable adapter or proxy). This is a temporary switch
-# for verifying whether the proxy path keeps the bonded connection across a
-# restart; a proper per-entry option can replace it once that's confirmed.
-FORCE_PROXY_SOURCE = "10:51:DB:5E:F9:8E"
-
 ProtocolName = Literal["ddm1", "ddm2"]
 
 
@@ -95,6 +89,11 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
             update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
         )
         self.address: str = entry.data[CONF_ADDRESS]
+        # Chosen Bluetooth source: SOURCE_AUTO or a specific scanner MAC.
+        # Options (changeable later) take precedence over the initial data.
+        self._source: str = entry.options.get(
+            CONF_SOURCE, entry.data.get(CONF_SOURCE, SOURCE_AUTO)
+        )
         self.data = CFXState()
         self.connected = False
         self.protocol: ProtocolName | None = None
@@ -266,34 +265,6 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
         self._initial_data.clear()
         self._initializing = True
         try:
-            if FORCE_PROXY_SOURCE:
-                # A specific proxy source is forced for testing, so skip the
-                # local BlueZ preparation entirely and delegate pairing to the
-                # proxy. This keeps the test honest: nothing touches a local
-                # adapter even if one happens to hear the cooler.
-                _LOGGER.debug(
-                    "CFX %s: proxy source forced; delegating pairing to proxy",
-                    ble_device.address,
-                )
-                client = await establish_connection(
-                    DometicCFXBleakClient,
-                    ble_device,
-                    DEFAULT_NAME,
-                    disconnected_callback=self._disconnected_callback,
-                    max_attempts=6,
-                    use_services_cache=False,
-                    pair=True,
-                    cfx_use_bluez_cache=False,
-                )
-                self._select_protocol(client)
-                self._client = client
-                notify_uuid = self._selected_notify_uuid()
-                await client.start_notify(notify_uuid, self._notification_callback)
-                await self._async_subscribe()
-                async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
-                    await self._initial_data.wait()
-                return client
-
             async with async_prepare_cfx_bluez(ble_device.address) as paired_locally:
                 client = await establish_connection(
                     DometicCFXBleakClient,
@@ -322,13 +293,13 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
     def _resolve_ble_device(self):
         """Return the BLEDevice to connect through.
 
-        When FORCE_PROXY_SOURCE is set to a scanner's source MAC, only that
-        source (e.g. a specific ESPHome Bluetooth proxy) is used, so a test
-        cannot silently fall back to a local adapter. When it is empty, the
-        normal automatic behaviour is used: the nearest reachable adapter or
-        proxy, exactly as before.
+        With SOURCE_AUTO, HA picks the nearest reachable adapter or proxy.
+        With a specific source MAC (a proxy or a local adapter), only that
+        source is used, so the connection can't silently fall back to a
+        different path.
         """
-        if FORCE_PROXY_SOURCE:
+        if self._source and self._source != SOURCE_AUTO:
+            want = self._source.upper()
             paths = bluetooth.async_scanner_devices_by_address(
                 self.hass, self.address, connectable=True
             )
@@ -337,23 +308,23 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
                     path.ble_device
                     for path in paths
                     if path.scanner.source
-                    and path.scanner.source.upper() == FORCE_PROXY_SOURCE.upper()
+                    and path.scanner.source.upper() == want
                 ),
                 None,
             )
             if ble_device is None:
                 raise UpdateFailed(
-                    f"CFX {self.address} not reachable via forced Bluetooth "
-                    f"source {FORCE_PROXY_SOURCE}"
+                    f"CFX {self.address} is not reachable via the selected "
+                    f"Bluetooth source {self._source}"
                 )
             _LOGGER.debug(
-                "CFX %s: connecting via forced source %s",
+                "CFX %s: connecting via selected source %s",
                 self.address,
-                FORCE_PROXY_SOURCE,
+                self._source,
             )
             return ble_device
 
-        # Default: let HA pick the nearest reachable adapter or proxy.
+        # Automatic: let HA pick the nearest reachable adapter or proxy.
         return bluetooth.async_ble_device_from_address(
             self.hass, self.address, connectable=True
         )

@@ -9,10 +9,17 @@ from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_ADDRESS
+from homeassistant.core import callback
 
-from .const import DEFAULT_NAME, DOMAIN, SERVICE_UUIDS
+from .bluetooth_sources import async_source_options
+from .const import CONF_SOURCE, DEFAULT_NAME, DOMAIN, SERVICE_UUIDS, SOURCE_AUTO
 
 
 def _matches_cfx5(discovery: BluetoothServiceInfoBleak) -> bool:
@@ -43,6 +50,8 @@ class DometicCFXConfigFlow(ConfigFlow, domain=DOMAIN):
 
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_devices: dict[str, BluetoothServiceInfoBleak] = {}
+        self._selected_address: str | None = None
+        self._selected_title: str = DEFAULT_NAME
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -65,10 +74,9 @@ class DometicCFXConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             discovery = self._discovery_info
-            return self.async_create_entry(
-                title=_discovery_title(discovery),
-                data={CONF_ADDRESS: discovery.address},
-            )
+            self._selected_address = discovery.address
+            self._selected_title = _discovery_title(discovery)
+            return await self.async_step_source()
 
         return self.async_show_form(
             step_id="confirm",
@@ -87,10 +95,9 @@ class DometicCFXConfigFlow(ConfigFlow, domain=DOMAIN):
             discovery = self._discovered_devices[user_input[CONF_ADDRESS]]
             await self.async_set_unique_id(discovery.address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title=_discovery_title(discovery),
-                data={CONF_ADDRESS: discovery.address},
-            )
+            self._selected_address = discovery.address
+            self._selected_title = _discovery_title(discovery)
+            return await self.async_step_source()
 
         await bluetooth.async_request_active_scan(self.hass)
         current_ids = self._async_current_ids(include_ignore=False)
@@ -116,6 +123,67 @@ class DometicCFXConfigFlow(ConfigFlow, domain=DOMAIN):
                             for info in self._discovered_devices.values()
                         }
                     )
+                }
+            ),
+        )
+
+    async def async_step_source(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Let the user choose which Bluetooth source connects to the cooler."""
+        assert self._selected_address is not None
+
+        if user_input is not None:
+            return self.async_create_entry(
+                title=self._selected_title,
+                data={
+                    CONF_ADDRESS: self._selected_address,
+                    CONF_SOURCE: user_input[CONF_SOURCE],
+                },
+            )
+
+        options = async_source_options(self.hass)
+        return self.async_show_form(
+            step_id="source",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SOURCE, default=SOURCE_AUTO): vol.In(options),
+                }
+            ),
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> "DometicCFXOptionsFlow":
+        """Return the options flow to change the Bluetooth source later."""
+        return DometicCFXOptionsFlow()
+
+
+class DometicCFXOptionsFlow(OptionsFlow):
+    """Allow changing the Bluetooth source after setup."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the Bluetooth source option."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = async_source_options(self.hass)
+        current = self.config_entry.options.get(
+            CONF_SOURCE,
+            self.config_entry.data.get(CONF_SOURCE, SOURCE_AUTO),
+        )
+        # If the previously selected source isn't currently visible (e.g. the
+        # proxy is offline), still offer it so the user doesn't lose the value.
+        if current not in options:
+            options = {**options, current: current}
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SOURCE, default=current): vol.In(options),
                 }
             ),
         )

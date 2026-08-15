@@ -26,3 +26,9 @@ PLATFORMS: tuple[Platform, ...] = (
 DEFAULT_NAME = "Dometic CFX"
 UPDATE_INTERVAL_SECONDS = 30
 INITIAL_DATA_TIMEOUT_SECONDS = 25
+
+# Bluetooth source selection. CONF_SOURCE holds either SOURCE_AUTO (let HA
+# pick the nearest reachable adapter/proxy) or a specific scanner source MAC
+# (a proxy or a local adapter) to force connections through only that source.
+CONF_SOURCE = "source"
+SOURCE_AUTO = "auto"
