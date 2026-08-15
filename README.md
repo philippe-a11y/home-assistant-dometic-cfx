@@ -19,9 +19,14 @@ Native Home Assistant custom integration for the CFX generations supported by Do
 
 | Family | App ID | BLE protocol | Status |
 |---|---|---|---|
-| CFX5, all product types (25/35/45/55/55IM/75DZ/95DZ) | `MC1` | DDM2 | Validated on hardware (CFX5 25; 35 via ESPHome fork) |
-| CFX2, including dual-zone models | `MC2` / `MC3` | DDM2 | Implemented, hardware test pending |
+| CFX5 | `MC1` | DDM2 | Validated on hardware (CFX5 25; 35 via ESPHome fork) |
+| CFX2 | `MC2` / `MC3` | DDM2 | Implemented, hardware test pending |
 | CFX3 | `CFX3` | DDM1 | Implemented, hardware test pending |
+
+The body-style suffixes (single zone, `IM` ice maker, `DZ` dual zone) appear
+across generations — e.g. a 75DZ exists as both a CFX3 and a CFX5 — so the
+suffix names a build, not a generation. Detection keys off the firmware ID
+(`MC1`/`MC2`/`MC3`/`CFX3`), not the marketing name.
 
 The integration keeps its original internal domain `dometic_cfx5` so installations of the first CFX5-only preview remain compatible.
 
