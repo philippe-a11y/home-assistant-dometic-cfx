@@ -20,7 +20,7 @@
         "data": {
           "source": "Bluetooth-Quelle"
         },
-        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Ein bestimmter ESPHome-Proxy wird empfohlen, da er die Bluetooth-Bindung über Neustarts hinweg hält."
+        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Ein bestimmter ESPHome-Proxy wird dringend empfohlen: Er hält die Bluetooth-Bindung über Neustarts hinweg. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Achtung: Mit einem lokalen Adapter (BlueZ) geht die Bindung bei jedem Neustart von Home Assistant verloren – du musst die Kühlbox dann nach jedem Neustart wieder in den PAIR-Modus versetzen."
       }
     }
   },
@@ -86,7 +86,7 @@
         "data": {
           "source": "Bluetooth-Quelle"
         },
-        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Ein bestimmter ESPHome-Proxy hält die Bluetooth-Bindung über Neustarts hinweg."
+        "description": "Wähle, wie Home Assistant sich mit der Kühlbox verbindet. Ein bestimmter ESPHome-Proxy wird dringend empfohlen: Er hält die Bluetooth-Bindung über Neustarts hinweg. Automatisch nutzt den nächsten erreichbaren Adapter oder Proxy. Achtung: Mit einem lokalen Adapter (BlueZ) geht die Bindung bei jedem Neustart von Home Assistant verloren – du musst die Kühlbox dann nach jedem Neustart wieder in den PAIR-Modus versetzen."
       }
     }
   }

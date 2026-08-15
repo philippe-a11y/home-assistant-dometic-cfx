@@ -20,7 +20,7 @@
         "data": {
           "source": "Bluetooth source"
         },
-        "description": "Choose how Home Assistant connects to the cooler. Automatic uses the nearest reachable adapter or proxy. Choosing a specific ESPHome proxy is recommended, as it keeps the bonded connection across restarts."
+        "description": "Choose how Home Assistant connects to the cooler. A specific ESPHome proxy is strongly recommended: it keeps the Bluetooth bond across restarts. Automatic uses the nearest reachable adapter or proxy. Warning: with a local adapter (BlueZ), the bond is lost on every Home Assistant restart, so you must put the cooler back into PAIR mode after each reboot."
       }
     }
   },
@@ -86,7 +86,7 @@
         "data": {
           "source": "Bluetooth source"
         },
-        "description": "Choose how Home Assistant connects to the cooler. Automatic uses the nearest reachable adapter or proxy. A specific ESPHome proxy keeps the bonded connection across restarts."
+        "description": "Choose how Home Assistant connects to the cooler. A specific ESPHome proxy is strongly recommended: it keeps the Bluetooth bond across restarts. Automatic uses the nearest reachable adapter or proxy. Warning: with a local adapter (BlueZ), the bond is lost on every Home Assistant restart, so you must put the cooler back into PAIR mode after each reboot."
       }
     }
   }
