@@ -266,6 +266,34 @@ class DometicCFXCoordinator(DataUpdateCoordinator[CFXState]):
         self._initial_data.clear()
         self._initializing = True
         try:
+            if FORCE_PROXY_SOURCE:
+                # A specific proxy source is forced for testing, so skip the
+                # local BlueZ preparation entirely and delegate pairing to the
+                # proxy. This keeps the test honest: nothing touches a local
+                # adapter even if one happens to hear the cooler.
+                _LOGGER.debug(
+                    "CFX %s: proxy source forced; delegating pairing to proxy",
+                    ble_device.address,
+                )
+                client = await establish_connection(
+                    DometicCFXBleakClient,
+                    ble_device,
+                    DEFAULT_NAME,
+                    disconnected_callback=self._disconnected_callback,
+                    max_attempts=6,
+                    use_services_cache=False,
+                    pair=True,
+                    cfx_use_bluez_cache=False,
+                )
+                self._select_protocol(client)
+                self._client = client
+                notify_uuid = self._selected_notify_uuid()
+                await client.start_notify(notify_uuid, self._notification_callback)
+                await self._async_subscribe()
+                async with asyncio.timeout(INITIAL_DATA_TIMEOUT_SECONDS):
+                    await self._initial_data.wait()
+                return client
+
             async with async_prepare_cfx_bluez(ble_device.address) as paired_locally:
                 client = await establish_connection(
                     DometicCFXBleakClient,
