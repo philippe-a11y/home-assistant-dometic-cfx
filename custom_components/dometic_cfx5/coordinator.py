@@ -76,7 +76,7 @@ _LOGGER = logging.getLogger(__name__)
 # selection (nearest reachable adapter or proxy). This is a temporary switch
 # for verifying whether the proxy path keeps the bonded connection across a
 # restart; a proper per-entry option can replace it once that's confirmed.
-FORCE_PROXY_SOURCE = ""
+FORCE_PROXY_SOURCE = "10:51:DB:5E:F9:8E"
 
 ProtocolName = Literal["ddm1", "ddm2"]
 
