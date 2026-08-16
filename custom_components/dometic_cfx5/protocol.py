@@ -123,7 +123,10 @@ def _normalise_product_name(raw: str) -> str:
         return raw
     return f"{raw[:4]} {raw[4:]}"
 
-POWER_SOURCE_NAMES = {0: "AC", 1: "DC"}
+# Power source values. 0=AC and 1=DC are verified on real hardware; 2=Solar
+# is an assumption (the app exposes a solar option, but the numeric value was
+# never observed on a box). Unknown values fall through to their raw number.
+POWER_SOURCE_NAMES = {0: "AC", 1: "DC", 2: "Solar"}
 BATTERY_PROTECTION_NAMES = {0: "Low", 1: "Medium", 2: "High"}
 
 ERROR_NAMES = {
