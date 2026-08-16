@@ -183,41 +183,6 @@ connect, security, and GATT `Pair` operation before Bleak starts a separate
 `Connect`. This avoids BlueZ rejecting the app-style post-connect security
 request with `org.bluez.Error.InProgress`.
 
-## Product photo (optional, manual)
-
-The integration deliberately does **not** fetch or bundle product photos. They
-are Dometic's copyrighted marketing images, and the only place to obtain a URL
-is Dometic's own (development) CMS API, which is not meant for production use
-and can change or disappear. Embedding that as an automatic feature would push
-a fragile third-party dependency and someone else's images onto every user.
-
-If you still want your cooler's photo on your own dashboard, you can look up the
-URL yourself and set it locally — this keeps the choice, and the dependency,
-with you:
-
-1. Take the **Product number (CMS SKU)** the integration exposes as a sensor
-   (for example `9620015957`).
-2. Query Dometic's CMS for that SKU's picture, e.g.:
-
-   ```text
-   https://dev.emea.cms.dometic-api.com/api/products?filters[sku][$eq]=<CMS_SKU>&populate[productPicture][fields][0]=url&populate[productPicture][fields][1]=formats
-   ```
-
-   The response contains a CloudFront image URL in several sizes.
-3. Use that URL where you like — as a Markdown/Picture card, as an
-   `entity_picture` on an entity (Settings → Devices → entity → Advanced), or
-   in a local template sensor:
-
-   ```yaml
-   template:
-     - sensor:
-         - name: "CFX product photo URL"
-           state: "<paste the CloudFront URL here>"
-   ```
-
-This is a manual, personal step. The API is a development endpoint, so treat
-any URL as potentially unstable, and be mindful that the image is Dometic's.
-
 ## Protocol notes
 
 The app uses these two CFX transports:
